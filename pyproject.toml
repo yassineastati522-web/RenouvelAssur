@@ -1,0 +1,14 @@
+[project]
+name = "renouvelassur"
+version = "0.1.0"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "Django==5.2.7",
+    "openpyxl>=3.1,<4",
+    "psycopg[binary]>=3.2,<4",
+    "gunicorn",
+    "whitenoise[brotli]",
+]
+
+[tool.vercel.scripts]
+build = 'if [ -n "$DATABASE_URL" ]; then python manage.py migrate --noinput && python manage.py ensure_admin; fi'

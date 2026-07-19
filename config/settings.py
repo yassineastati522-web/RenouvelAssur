@@ -1,10 +1,15 @@
 import os
+import urllib.parse
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-change-me")
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")]
+DEBUG = os.environ.get(
+    "DJANGO_DEBUG", "0" if os.environ.get("VERCEL") else "1"
+) == "1"
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.vercel.app"
+).split(",") if h.strip()]
 
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
@@ -23,7 +28,11 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STORAGES = {
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if DEBUG
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        ),
     },
 }
 
@@ -39,7 +48,17 @@ TEMPLATES = [{
 }]
 WSGI_APPLICATION = "config.wsgi.application"
 
-if os.environ.get("POSTGRES_DB"):
+if os.environ.get("DATABASE_URL"):
+    database_url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
+    DATABASES = {"default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": database_url.path.lstrip("/"),
+        "USER": urllib.parse.unquote(database_url.username or ""),
+        "PASSWORD": urllib.parse.unquote(database_url.password or ""),
+        "HOST": database_url.hostname or "",
+        "PORT": database_url.port or "5432",
+    }}
+elif os.environ.get("POSTGRES_DB"):
     DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql", "NAME": os.environ["POSTGRES_DB"],
         "USER": os.environ.get("POSTGRES_USER", "postgres"), "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
         "HOST": os.environ.get("POSTGRES_HOST", "localhost"), "PORT": os.environ.get("POSTGRES_PORT", "5432")}}
@@ -64,5 +83,5 @@ LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 TERMINATION_EVENTS = [v.strip() for v in os.environ.get(
-    "TERMINATION_EVENTS", "Résiliation,Annulation,Avenant de résiliation,Ristourne"
+    "TERMINATION_EVENTS", "R?siliation,Annulation,Avenant de r?siliation,Ristourne"
 ).split(",") if v.strip()]
