@@ -9,6 +9,3 @@ dependencies = [
     "gunicorn",
     "whitenoise[brotli]",
 ]
-
-[tool.vercel.scripts]
-build = 'if [ -n "$DATABASE_URL" ] || [ -n "$POSTGRES_DB" ]; then python manage.py migrate --noinput && python manage.py ensure_admin; fi'
