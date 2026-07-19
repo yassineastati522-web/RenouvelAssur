@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}Supprimer le contrat {{ contract.policy_number }}{% endblock %}
+{% block content %}
+<a class="back" href="{% url 'contract_detail' contract.pk %}">← Retour au contrat</a>
+<section class="panel delete-panel">
+  <span class="eyebrow">ACTION ADMINISTRATEUR</span>
+  <h1>Supprimer ce contrat ?</h1>
+  <p>Vous allez supprimer la police <b>{{ contract.policy_number }}</b> de <b>{{ contract.client.name }}</b>.</p>
+  <div class="delete-warning">
+    Cette action est définitive. Elle supprimera également {{ interaction_count }} interaction{{ interaction_count|pluralize }} liée{{ interaction_count|pluralize }}{% if has_termination %} et la fiche de résiliation{% endif %}. Le client restera enregistré.
+  </div>
+  <form method="post" class="delete-actions">
+    {% csrf_token %}
+    <a class="btn light" href="{% url 'contract_detail' contract.pk %}">Annuler</a>
+    <button class="btn danger" type="submit">Supprimer définitivement</button>
+  </form>
+</section>
+{% endblock %}

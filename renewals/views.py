@@ -7,6 +7,7 @@ from django.db.models import Count, OuterRef, Q, Subquery, Sum
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_http_methods
 from .forms import ClientForm, ImportForm, InteractionForm
 from .models import CallInteraction, Client, Contract, ImportBatch, Termination
 from .services import import_contracts
@@ -120,6 +121,24 @@ def contract_detail(request, pk):
             messages.warning(request, "Trois tentatives sans réponse sur des jours distincts : le statut « Injoignable » est suggéré.")
         return redirect("contract_detail", pk=contract.pk)
     return render(request, "renewals/contract_detail.html", {"contract": contract, "form": form})
+
+
+@login_required
+@user_passes_test(lambda u: u.is_agency_admin)
+@require_http_methods(["GET", "POST"])
+def contract_delete(request, pk):
+    contract = get_object_or_404(Contract.objects.select_related("client"), pk=pk)
+    if request.method == "POST":
+        policy_number = contract.policy_number
+        client_name = contract.client.name
+        contract.delete()
+        messages.success(request, f"Le contrat {policy_number} de {client_name} a été supprimé.")
+        return redirect("contract_list")
+    return render(request, "renewals/contract_confirm_delete.html", {
+        "contract": contract,
+        "interaction_count": contract.interactions.count(),
+        "has_termination": Termination.objects.filter(contract=contract).exists(),
+    })
 
 
 @login_required

@@ -33,6 +33,7 @@
       <dt>Événement</dt><dd>{{ contract.event|default:"—" }}</dd>
     </dl>
     <a class="btn light wide" href="{% url 'client_detail' contract.client.pk %}">Voir la fiche client</a>
+    {% if user.is_agency_admin %}<a class="btn danger wide delete-contract-link" href="{% url 'contract_delete' contract.pk %}">Supprimer ce contrat</a>{% endif %}
   </aside>
 </div>
 <section class="panel history">

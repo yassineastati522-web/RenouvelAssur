@@ -187,6 +187,38 @@ class ApplicationFlowTests(TestCase):
         self.contract.refresh_from_db()
         self.assertEqual(self.contract.renewal_status, "wants")
 
+    def test_only_an_admin_can_delete_a_contract_with_its_related_history(self):
+        interaction = CallInteraction.objects.create(
+            contract=self.contract,
+            employee=self.user,
+            call_result=CallInteraction.Result.ANSWERED,
+            renewal_status=self.contract.renewal_status,
+        )
+        termination = Termination.objects.create(
+            contract=self.contract,
+            reason="Résiliation à supprimer",
+            recorded_by=self.user,
+        )
+        delete_url = reverse("contract_delete", args=[self.contract.pk])
+
+        denied = self.client.post(delete_url)
+        self.assertEqual(denied.status_code, 302)
+        self.assertTrue(Contract.objects.filter(pk=self.contract.pk).exists())
+
+        self.user.role = User.Role.ADMIN
+        self.user.save(update_fields=["role"])
+        confirmation = self.client.get(delete_url)
+        self.assertContains(confirmation, "Supprimer définitivement")
+        self.assertTrue(Contract.objects.filter(pk=self.contract.pk).exists())
+
+        response = self.client.post(delete_url, follow=True)
+        self.assertRedirects(response, reverse("contract_list"))
+        self.assertContains(response, "a été supprimé")
+        self.assertFalse(Contract.objects.filter(pk=self.contract.pk).exists())
+        self.assertFalse(CallInteraction.objects.filter(pk=interaction.pk).exists())
+        self.assertFalse(Termination.objects.filter(pk=termination.pk).exists())
+        self.assertTrue(Client.objects.filter(pk=self.client_obj.pk).exists())
+
     def test_call_form_only_offers_the_three_requested_results(self):
         response = self.client.get(reverse("contract_detail", args=[self.contract.pk]))
         choices = list(response.context["form"].fields["call_result"].choices)
