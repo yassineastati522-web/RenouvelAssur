@@ -6,6 +6,8 @@ from zipfile import BadZipFile
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models.functions import Lower
+from django.utils import timezone
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
@@ -205,6 +207,85 @@ def analyze_rows(rows):
     return analysis
 
 
+def record_error(batch, line_number, exc):
+    batch.rejected_rows += 1
+    if len(batch.errors) < 100:
+        batch.errors.append({"line": line_number, "error": str(exc)})
+
+
+def save_batch(batch):
+    batch.save(update_fields=["added_rows", "updated_rows", "rejected_rows", "errors"])
+    return batch
+
+
+def import_contact_rows(candidates, mapping, batch):
+    parsed = []
+    for line_number, row in candidates:
+        try:
+            phone = clean_text(row_value(row, mapping, "client_phone"))
+            if not phone:
+                raise ValueError("téléphone obligatoire")
+            parsed.append({
+                "line": line_number,
+                "phone": phone,
+                "external_id": clean_text(row_value(row, mapping, "client_external_id")),
+                "policy": clean_text(row_value(row, mapping, "policy_number")),
+                "name": clean_text(row_value(row, mapping, "client_name")),
+            })
+        except Exception as exc:
+            record_error(batch, line_number, exc)
+
+    external_ids = {item["external_id"] for item in parsed if item["external_id"]}
+    policies = {item["policy"] for item in parsed if item["policy"]}
+    names = {item["name"].lower() for item in parsed if item["name"]}
+    clients_by_external_id = {
+        client.external_id: client
+        for client in Client.objects.filter(external_id__in=external_ids)
+    }
+    clients_by_policy = {
+        contract.policy_number: contract.client
+        for contract in Contract.objects.select_related("client").filter(policy_number__in=policies)
+    }
+    clients_by_name = {}
+    if names:
+        for client in Client.objects.annotate(import_name=Lower("name")).filter(import_name__in=names):
+            clients_by_name.setdefault(client.name.lower(), client)
+
+    changed_clients = {}
+    for item in parsed:
+        client = None
+        if item["external_id"]:
+            client = clients_by_external_id.get(item["external_id"])
+        if client is None and item["policy"]:
+            client = clients_by_policy.get(item["policy"])
+        if client is None and item["name"]:
+            client = clients_by_name.get(item["name"].lower())
+        if client is None:
+            record_error(batch, item["line"], ValueError("client introuvable avec les identifiants fournis"))
+            continue
+        client.phone = item["phone"]
+        changed_clients[client.pk] = client
+        batch.updated_rows += 1
+
+    if changed_clients:
+        now = timezone.now()
+        for client in changed_clients.values():
+            client.updated_at = now
+        Client.objects.bulk_update(
+            changed_clients.values(),
+            ["phone", "updated_at"],
+            batch_size=500,
+        )
+    return save_batch(batch)
+
+
+CONTRACT_VALUE_FIELDS = (
+    "category", "agent_reference", "agent_code", "event", "pack_code", "brand",
+    "registration", "net_premium", "cash_premium", "total_premium", "net_payable",
+    "effective_date", "end_date", "issue_date",
+)
+
+
 def import_contract_rows(rows, filename, user):
     mapping = header_map(rows[0]) if rows else {}
     candidates = list(data_rows(rows, mapping)) if rows else []
@@ -212,8 +293,7 @@ def import_contract_rows(rows, filename, user):
     if not rows:
         batch.errors = [{"line": 1, "error": "Fichier vide"}]
         batch.rejected_rows = 1
-        batch.save()
-        return batch
+        return save_batch(batch)
 
     contacts_only = (
         "end_date" not in mapping
@@ -224,33 +304,13 @@ def import_contract_rows(rows, filename, user):
     if missing and not contacts_only:
         batch.errors = [{"line": 1, "error": "Colonnes obligatoires absentes : " + ", ".join(sorted(missing))}]
         batch.rejected_rows = batch.total_rows
-        batch.save()
-        return batch
+        return save_batch(batch)
+    if contacts_only:
+        return import_contact_rows(candidates, mapping, batch)
 
+    parsed = []
     for line_number, row in candidates:
         try:
-            if contacts_only:
-                phone = clean_text(row_value(row, mapping, "client_phone"))
-                if not phone:
-                    raise ValueError("téléphone obligatoire")
-                client = None
-                external_id = clean_text(row_value(row, mapping, "client_external_id"))
-                policy_lookup = clean_text(row_value(row, mapping, "policy_number"))
-                name_lookup = clean_text(row_value(row, mapping, "client_name"))
-                if external_id:
-                    client = Client.objects.filter(external_id=external_id).first()
-                if not client and policy_lookup:
-                    contract = Contract.objects.select_related("client").filter(policy_number=policy_lookup).first()
-                    client = contract.client if contract else None
-                if not client and name_lookup:
-                    client = Client.objects.filter(name__iexact=name_lookup).first()
-                if not client:
-                    raise ValueError("client introuvable avec les identifiants fournis")
-                client.phone = phone
-                client.save(update_fields=["phone", "updated_at"])
-                batch.updated_rows += 1
-                continue
-
             policy = clean_text(row_value(row, mapping, "policy_number"))
             receipt = clean_text(row_value(row, mapping, "receipt"))
             name = clean_text(row_value(row, mapping, "client_name"))
@@ -274,48 +334,133 @@ def import_contract_rows(rows, filename, user):
             }
             if not values["end_date"]:
                 raise ValueError("date de fin obligatoire")
-
-            with transaction.atomic():
-                external_id = clean_text(row_value(row, mapping, "client_external_id"))
-                phone = clean_text(row_value(row, mapping, "client_phone"))
-                lookup = {"external_id": external_id} if external_id else {"name__iexact": name}
-                client = Client.objects.filter(**lookup).first()
-                if not client:
-                    client = Client.objects.create(name=name, phone=phone, external_id=external_id)
-                else:
-                    changed = False
-                    if phone and client.phone != phone:
-                        client.phone = phone
-                        changed = True
-                    if external_id and not client.external_id:
-                        client.external_id = external_id
-                        changed = True
-                    if changed:
-                        client.save()
-                values["client"] = client
-                contract, created = Contract.objects.update_or_create(
-                    policy_number=policy,
-                    receipt=receipt,
-                    defaults=values,
-                )
-                event_norm = normalize(contract.event)
-                if any(normalize(word) in event_norm for word in settings.TERMINATION_EVENTS):
-                    contract.renewal_status = Contract.RenewalStatus.TERMINATED
-                    contract.save(update_fields=["renewal_status"])
-                    Termination.objects.get_or_create(
-                        contract=contract,
-                        defaults={"reason": contract.event, "recorded_by": user},
-                    )
-                if created:
-                    batch.added_rows += 1
-                else:
-                    batch.updated_rows += 1
+            parsed.append({
+                "line": line_number,
+                "key": (policy, receipt),
+                "name": name,
+                "external_id": clean_text(row_value(row, mapping, "client_external_id")),
+                "phone": clean_text(row_value(row, mapping, "client_phone")),
+                "values": values,
+            })
         except Exception as exc:
-            batch.rejected_rows += 1
-            if len(batch.errors) < 100:
-                batch.errors.append({"line": line_number, "error": str(exc)})
-    batch.save()
-    return batch
+            record_error(batch, line_number, exc)
+
+    if not parsed:
+        return save_batch(batch)
+
+    try:
+        with transaction.atomic():
+            external_ids = {item["external_id"] for item in parsed if item["external_id"]}
+            names = {item["name"].lower() for item in parsed if not item["external_id"]}
+            clients_by_identity = {
+                ("external", client.external_id): client
+                for client in Client.objects.filter(external_id__in=external_ids)
+            }
+            if names:
+                for client in Client.objects.annotate(import_name=Lower("name")).filter(import_name__in=names):
+                    clients_by_identity.setdefault(("name", client.name.lower()), client)
+
+            new_clients = {}
+            changed_clients = {}
+            for item in parsed:
+                identity = (
+                    ("external", item["external_id"])
+                    if item["external_id"]
+                    else ("name", item["name"].lower())
+                )
+                client = clients_by_identity.get(identity) or new_clients.get(identity)
+                if client is None:
+                    client = Client(
+                        name=item["name"],
+                        phone=item["phone"],
+                        external_id=item["external_id"],
+                    )
+                    new_clients[identity] = client
+                elif item["phone"] and client.phone != item["phone"]:
+                    client.phone = item["phone"]
+                    if client.pk:
+                        changed_clients[client.pk] = client
+                clients_by_identity[identity] = client
+
+            if new_clients:
+                Client.objects.bulk_create(list(new_clients.values()), batch_size=500)
+            if changed_clients:
+                now = timezone.now()
+                for client in changed_clients.values():
+                    client.updated_at = now
+                Client.objects.bulk_update(
+                    list(changed_clients.values()),
+                    ["phone", "updated_at"],
+                    batch_size=500,
+                )
+
+            policies = {item["key"][0] for item in parsed}
+            existing_contracts = {
+                (contract.policy_number, contract.receipt): contract
+                for contract in Contract.objects.filter(policy_number__in=policies)
+            }
+            seen_keys = set(existing_contracts)
+            final_records = {}
+            for item in parsed:
+                if item["key"] in seen_keys:
+                    batch.updated_rows += 1
+                else:
+                    batch.added_rows += 1
+                    seen_keys.add(item["key"])
+                final_records[item["key"]] = item
+
+            termination_tokens = [normalize(value) for value in settings.TERMINATION_EVENTS]
+            new_contracts = []
+            changed_contracts = []
+            terminated_contracts = []
+            now = timezone.now()
+            for key, item in final_records.items():
+                identity = (
+                    ("external", item["external_id"])
+                    if item["external_id"]
+                    else ("name", item["name"].lower())
+                )
+                values = {**item["values"], "client": clients_by_identity[identity]}
+                contract = existing_contracts.get(key)
+                if contract is None:
+                    contract = Contract(policy_number=key[0], receipt=key[1], **values)
+                    new_contracts.append(contract)
+                else:
+                    for field, value in values.items():
+                        setattr(contract, field, value)
+                    contract.updated_at = now
+                    changed_contracts.append(contract)
+                event_norm = normalize(values["event"])
+                if any(token in event_norm for token in termination_tokens):
+                    contract.renewal_status = Contract.RenewalStatus.TERMINATED
+                    terminated_contracts.append(contract)
+
+            if new_contracts:
+                Contract.objects.bulk_create(new_contracts, batch_size=500)
+            if changed_contracts:
+                Contract.objects.bulk_update(
+                    changed_contracts,
+                    ["client", *CONTRACT_VALUE_FIELDS, "renewal_status", "updated_at"],
+                    batch_size=500,
+                )
+
+            terminated_ids = [contract.pk for contract in terminated_contracts]
+            existing_termination_ids = set(
+                Termination.objects.filter(contract_id__in=terminated_ids).values_list("contract_id", flat=True)
+            )
+            Termination.objects.bulk_create([
+                Termination(contract=contract, reason=contract.event, recorded_by=user)
+                for contract in terminated_contracts
+                if contract.pk not in existing_termination_ids
+            ], batch_size=500)
+    except Exception as exc:
+        batch.added_rows = 0
+        batch.updated_rows = 0
+        batch.rejected_rows += len(parsed)
+        if len(batch.errors) < 100:
+            batch.errors.append({"line": 1, "error": f"Import annulé : {exc}"})
+
+    return save_batch(batch)
 
 
 def import_contracts(upload, user):

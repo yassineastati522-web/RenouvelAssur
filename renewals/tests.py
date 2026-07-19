@@ -5,7 +5,9 @@ from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook
@@ -58,7 +60,7 @@ class ImportServiceTests(TestCase):
 
     def upload(self, premium="1 250,50"):
         return excel_upload([
-            ["Police", "Assur?", "T?l?phone", "Immatriculation", "Prime TTC", "Quittance", "Date Effet", "Date Fin"],
+            ["Police", "Assuré", "Téléphone", "Immatriculation", "Prime TTC", "Quittance", "Date Effet", "Date Fin"],
             ["P-001", "Client Test", "0611223344", "123-A-4", premium, "Q-01", "01/01/2026", "31/12/2026"],
         ])
 
@@ -71,7 +73,7 @@ class ImportServiceTests(TestCase):
 
     def test_bad_date_is_reported(self):
         upload = excel_upload([
-            ["Police", "Assur?", "Date Fin"],
+            ["Police", "Assuré", "Date Fin"],
             ["P-2", "Test", "jamais"],
         ], filename="bad.xlsx")
         batch = import_contracts(upload, self.admin)
@@ -81,7 +83,7 @@ class ImportServiceTests(TestCase):
     def test_phone_only_file_updates_existing_client_by_policy(self):
         import_contracts(self.upload(), self.admin)
         upload = excel_upload([
-            ["Police", "T?l?phone"],
+            ["Police", "Téléphone"],
             ["P-001", "0699999999"],
         ], filename="telephones.xlsx")
         batch = import_contracts(upload, self.admin)
@@ -132,6 +134,21 @@ class ImportServiceTests(TestCase):
         self.assertEqual(str(contract.net_payable), "4562.82")
         self.assertEqual(contract.end_date.isoformat(), "2027-07-19")
 
+    def test_large_excel_import_uses_a_bounded_number_of_queries(self):
+        rows = [["POLICE", "CLIENT", "NUMERO_CIN", "DATE_ECHEANCE", "NUM_QUITTANCE"]]
+        rows.extend([
+            [f"POL-{index:04d}", f"Client {index}", f"CIN-{index:04d}", "31/12/2026", f"Q-{index:04d}"]
+            for index in range(412)
+        ])
+
+        with CaptureQueriesContext(connection) as queries:
+            batch = import_contracts(excel_upload(rows, filename="01_07_2026__bordereau.xlsx"), self.admin)
+
+        self.assertEqual((batch.total_rows, batch.added_rows, batch.rejected_rows), (412, 412, 0))
+        self.assertEqual(Client.objects.count(), 412)
+        self.assertEqual(Contract.objects.count(), 412)
+        self.assertLess(len(queries), 30)
+
 
 class ApplicationFlowTests(TestCase):
     def setUp(self):
@@ -163,7 +180,7 @@ class ApplicationFlowTests(TestCase):
             "channel": "phone",
             "call_result": "answered",
             "renewal_status": "wants",
-            "comment": "Int?ress?",
+            "comment": "Intéressé",
         })
         self.assertRedirects(response, reverse("contract_detail", args=[self.contract.pk]))
         self.assertEqual(CallInteraction.objects.count(), 1)
@@ -174,8 +191,8 @@ class ApplicationFlowTests(TestCase):
         response = self.client.get(reverse("contract_detail", args=[self.contract.pk]))
         choices = list(response.context["form"].fields["call_result"].choices)
         self.assertEqual(choices, [
-            ("answered", "Client appel?"),
-            ("voicemail", "Bo?te vocale"),
+            ("answered", "Client appelé"),
+            ("voicemail", "Boîte vocale"),
             ("unreachable", "Non joignable"),
         ])
 
@@ -184,14 +201,14 @@ class ApplicationFlowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Checklist des appels")
         self.assertContains(response, self.client_obj.name)
-        self.assertContains(response, "V?hicule")
+        self.assertContains(response, "Véhicule")
         self.assertContains(response, "DACIA")
         self.assertContains(response, "12345-A-1")
 
         response = self.client.post(reverse("call_checklist"), {
             "contract": self.contract.pk,
             "call_result": "voicemail",
-            "comment": "Message laiss?",
+            "comment": "Message laissé",
         })
         self.assertRedirects(response, reverse("call_checklist"))
         interaction = CallInteraction.objects.get()
@@ -199,11 +216,11 @@ class ApplicationFlowTests(TestCase):
         self.assertEqual(interaction.employee, self.user)
         self.assertEqual(interaction.channel, CallInteraction.Channel.PHONE)
         self.assertEqual(interaction.call_result, CallInteraction.Result.VOICEMAIL)
-        self.assertEqual(interaction.comment, "Message laiss?")
+        self.assertEqual(interaction.comment, "Message laissé")
         self.assertEqual(interaction.renewal_status, self.contract.renewal_status)
 
         response = self.client.get(reverse("call_checklist"))
-        self.assertContains(response, "Bo?te vocale")
+        self.assertContains(response, "Boîte vocale")
         self.assertContains(response, "checked")
         pending = self.client.get(reverse("call_checklist"), {"call_status": "pending"})
         self.assertNotContains(pending, self.contract.policy_number)
@@ -236,12 +253,12 @@ class ApplicationFlowTests(TestCase):
         self.assertFalse(CallInteraction.objects.exists())
 
     def test_call_checklist_filters_due_dates_and_keeps_ascending_order(self):
-        self.client_obj.name = "?ch?ance cinq jours"
+        self.client_obj.name = "Échéance cinq jours"
         self.client_obj.save(update_fields=["name", "updated_at"])
         self.contract.policy_number = "POL-05"
         self.contract.save(update_fields=["policy_number", "updated_at"])
 
-        client_10 = Client.objects.create(name="?ch?ance dix jours", phone="0611111111")
+        client_10 = Client.objects.create(name="Échéance dix jours", phone="0611111111")
         Contract.objects.create(
             client=client_10,
             assigned_agent=self.user,
@@ -249,7 +266,7 @@ class ApplicationFlowTests(TestCase):
             receipt="Q-10",
             end_date=timezone.localdate() + timedelta(days=10),
         )
-        client_20 = Client.objects.create(name="?ch?ance vingt jours", phone="0622222222")
+        client_20 = Client.objects.create(name="Échéance vingt jours", phone="0622222222")
         Contract.objects.create(
             client=client_20,
             assigned_agent=self.user,
@@ -276,7 +293,7 @@ class ApplicationFlowTests(TestCase):
     def test_terminated_list_shows_contract_count_per_client_within_agent_scope(self):
         self.contract.renewal_status = Contract.RenewalStatus.TERMINATED
         self.contract.save(update_fields=["renewal_status", "updated_at"])
-        Termination.objects.create(contract=self.contract, reason="R?siliation client", recorded_by=self.user)
+        Termination.objects.create(contract=self.contract, reason="Résiliation client", recorded_by=self.user)
 
         second_contract = Contract.objects.create(
             client=self.client_obj,
@@ -286,7 +303,7 @@ class ApplicationFlowTests(TestCase):
             end_date=timezone.localdate() + timedelta(days=30),
             renewal_status=Contract.RenewalStatus.TERMINATED,
         )
-        Termination.objects.create(contract=second_contract, reason="Deuxi?me r?siliation", recorded_by=self.user)
+        Termination.objects.create(contract=second_contract, reason="Deuxième résiliation", recorded_by=self.user)
 
         other_agent = User.objects.create_user("termination-other", password="secret", role=User.Role.AGENT)
         hidden_contract = Contract.objects.create(
@@ -309,7 +326,7 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(response, "P-HIDDEN")
 
     def test_terminated_contracts_are_excluded_from_upcoming_and_renewal_lists(self):
-        status_client = Client.objects.create(name="R?sili? par statut", phone="0600000001")
+        status_client = Client.objects.create(name="Résilié par statut", phone="0600000001")
         Contract.objects.create(
             client=status_client,
             assigned_agent=self.user,
@@ -318,7 +335,7 @@ class ApplicationFlowTests(TestCase):
             end_date=timezone.localdate() + timedelta(days=6),
             renewal_status=Contract.RenewalStatus.TERMINATED,
         )
-        manual_client = Client.objects.create(name="R?sili? manuellement", phone="0600000002")
+        manual_client = Client.objects.create(name="Résilié manuellement", phone="0600000002")
         Contract.objects.create(
             client=manual_client,
             assigned_agent=self.user,
@@ -327,7 +344,7 @@ class ApplicationFlowTests(TestCase):
             end_date=timezone.localdate() + timedelta(days=7),
             manually_terminated=True,
         )
-        relation_client = Client.objects.create(name="R?sili? avec fiche", phone="0600000003")
+        relation_client = Client.objects.create(name="Résilié avec fiche", phone="0600000003")
         relation_contract = Contract.objects.create(
             client=relation_client,
             assigned_agent=self.user,
@@ -335,7 +352,7 @@ class ApplicationFlowTests(TestCase):
             receipt="QT-3",
             end_date=timezone.localdate() + timedelta(days=8),
         )
-        Termination.objects.create(contract=relation_contract, reason="R?siliation enregistr?e", recorded_by=self.user)
+        Termination.objects.create(contract=relation_contract, reason="Résiliation enregistrée", recorded_by=self.user)
 
         dashboard = self.client.get(reverse("dashboard"))
         renewals = self.client.get(reverse("contract_list"), {"days": 30})
