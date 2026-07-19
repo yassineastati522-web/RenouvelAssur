@@ -24,7 +24,7 @@ class Command(BaseCommand):
         )
 
         changed_fields = []
-        if created:
+        if created or not user.check_password(password):
             user.set_password(password)
             changed_fields.append("password")
         if email and user.email != email:
@@ -43,5 +43,5 @@ class Command(BaseCommand):
         if changed_fields:
             user.save(update_fields=changed_fields)
 
-        action = "cr??" if created else "d?j? pr?sent et v?rifi?"
+        action = "cr??" if created else "mis ? jour et v?rifi?"
         self.stdout.write(self.style.SUCCESS(f"Administrateur {username} {action}."))
