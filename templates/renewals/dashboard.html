@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% block title %}Tableau de bord{% endblock %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">VUE D’ENSEMBLE</span><h1>Bonjour {{ user.first_name|default:user.username }},</h1><p>Voici les priorités de votre portefeuille aujourd’hui.</p></div><a class="btn primary" href="{% url 'contract_list' %}">Voir les échéances <span>→</span></a></div>
+<div class="kpi-grid">
+  <article class="kpi orange"><div class="kpi-icon">◷</div><small>EXPIRANT SOUS 30 JOURS</small><strong>{{ stats.soon }}</strong><a href="{% url 'contract_list' %}">Contrats à traiter →</a></article>
+  <article class="kpi blue"><div class="kpi-icon">☎</div><small>À RELANCER AUJOURD’HUI</small><strong>{{ stats.due_today }}</strong><a href="{% url 'contract_list' %}">Voir les relances →</a></article>
+  <article class="kpi green"><div class="kpi-icon">✓</div><small>CONTRATS RENOUVELÉS</small><strong>{{ stats.renewed }}</strong><a href="{% url 'contract_list' %}?status=renewed">Portefeuille conservé →</a></article>
+  <article class="kpi red"><div class="kpi-icon">!</div><small>NON RENOUVELÉS</small><strong>{{ stats.not_renewed }}</strong><a href="{% url 'expired_list' %}">À analyser →</a></article>
+</div>
+<div class="panel-row"><section class="panel performance"><div class="panel-title"><div><span class="eyebrow">PERFORMANCE</span><h2>Renouvellements</h2></div><b class="rate">{{ stats.rate }}%</b></div><div class="progress"><i style="width:{{ stats.rate }}%"></i></div><div class="money-grid"><div><small>PRIMES À RISQUE</small><strong>{{ stats.at_risk|floatformat:0 }} <em>MAD</em></strong></div><div><small>PRIMES RENOUVELÉES</small><strong>{{ stats.renewed_premium|floatformat:0 }} <em>MAD</em></strong></div></div></section>
+<section class="panel compact"><span class="eyebrow">SUIVI</span><h2>État des contacts</h2><div class="mini-stats"><div><b>{{ stats.answered }}</b><span>Ont répondu</span></div><div><b>{{ stats.unreachable }}</b><span>Injoignables</span></div><div><b>{{ stats.terminated }}</b><span>Résiliés</span></div></div></section></div>
+<section class="panel table-panel"><div class="panel-title"><div><span class="eyebrow">À TRAITER EN PRIORITÉ</span><h2>Prochaines échéances</h2></div><a href="{% url 'contract_list' %}">Tout afficher →</a></div>{% include 'renewals/contract_table.html' with contracts=upcoming compact=True %}</section>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% load static %}
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}RenouvelAssur{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'css/call-results.css' %}">
+</head>
+<body>
+{% if user.is_authenticated %}
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="{% url 'dashboard' %}"><span>RA</span><strong>Renouvel<span>Assur</span></strong></a>
+    <nav>
+      <a class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">⌂ <span>Tableau de bord</span></a>
+      <p>GESTION</p>
+      <a href="{% url 'contract_list' %}">↻ <span>À renouveler</span></a>
+      <a class="{% if request.resolver_match.url_name == 'call_checklist' %}active{% endif %}" href="{% url 'call_checklist' %}">☑ <span>Checklist des appels</span></a>
+      <a href="{% url 'expired_list' %}">◷ <span>Non renouvelés</span></a>
+      <a href="{% url 'terminated_list' %}">⊘ <span>Résiliés</span></a>
+      <a href="{% url 'client_list' %}">♙ <span>Clients</span></a>
+      {% if user.is_agency_admin %}<p>ADMINISTRATION</p><a href="{% url 'import_view' %}">⇧ <span>Importation</span></a><a href="{% url 'admin:index' %}">⚙ <span>Utilisateurs</span></a>{% endif %}
+    </nav>
+    <div class="user-card"><div class="avatar">{{ user.first_name|first|default:user.username|first|upper }}</div><div><strong>{{ user.get_full_name|default:user.username }}</strong><small>{{ user.get_role_display }}</small></div><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button title="Déconnexion">↪</button></form></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><button class="menu" onclick="document.body.classList.toggle('nav-open')">☰</button><div><small>AGENCE D’ASSURANCE</small><b>{% now "l d F Y" %}</b></div><a class="help" href="{% url 'admin:index' %}">?</a></header>
+    <div class="content">
+      {% for message in messages %}<div class="alert {{ message.tags }}">{{ message }}</div>{% endfor %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+{% else %}{% block anonymous %}{% endblock %}{% endif %}
+</body></html>

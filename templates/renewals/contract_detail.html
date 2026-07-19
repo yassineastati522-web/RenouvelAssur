@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}Police {{ contract.policy_number }}{% endblock %}
+{% block content %}
+<a class="back" href="{% url 'contract_list' %}">← Retour aux échéances</a>
+<div class="detail-head">
+  <div>
+    <span class="priority {{ contract.priority }}">{{ contract.get_renewal_status_display }}</span>
+    <h1>{{ contract.client.name }}</h1>
+    <p>Police {{ contract.policy_number }} · {{ contract.category|default:"Type non renseigné" }}</p>
+  </div>
+  <div class="deadline">
+    <small>ÉCHÉANCE</small><b>{{ contract.end_date|date:"d/m/Y" }}</b><span>{{ contract.days_remaining }} jours restants</span>
+  </div>
+</div>
+<div class="detail-grid">
+  <section class="panel">
+    <div class="panel-title"><div><span class="eyebrow">NOUVELLE ACTION</span><h2>Enregistrer une interaction</h2></div></div>
+    <form method="post" class="form-grid">
+      {% csrf_token %}{{ form.non_field_errors }}
+      {% for field in form %}<div class="field {% if field.name == 'comment' %}full{% endif %}"><label>{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}
+      <div class="full"><button class="btn primary">Enregistrer dans l’historique →</button></div>
+    </form>
+  </section>
+  <aside class="panel info-card">
+    <span class="eyebrow">CONTRAT</span><h2>Informations</h2>
+    <dl>
+      <dt>Téléphone</dt><dd><a href="tel:{{ contract.client.phone }}">{{ contract.client.phone|default:"À renseigner" }}</a></dd>
+      <dt>Marque</dt><dd>{{ contract.brand|default:"—" }}</dd>
+      <dt>Immatriculation</dt><dd>{{ contract.registration|default:"—" }}</dd>
+      <dt>Prime TTC</dt><dd>{{ contract.total_premium|default_if_none:0|floatformat:2 }} MAD</dd>
+      <dt>Date d’effet</dt><dd>{{ contract.effective_date|date:"d/m/Y"|default:"—" }}</dd>
+      <dt>Agent responsable</dt><dd>{{ contract.assigned_agent.get_full_name|default:contract.agent_code|default:"Non attribué" }}</dd>
+      <dt>Événement</dt><dd>{{ contract.event|default:"—" }}</dd>
+    </dl>
+    <a class="btn light wide" href="{% url 'client_detail' contract.client.pk %}">Voir la fiche client</a>
+  </aside>
+</div>
+<section class="panel history">
+  <div class="panel-title"><div><span class="eyebrow">JOURNAL COMPLET</span><h2>Historique des interactions</h2></div><b>{{ contract.interactions.count }} action{{ contract.interactions.count|pluralize }}</b></div>
+  <div class="timeline">
+    {% for item in contract.interactions.all %}<article><i></i><div><b>{{ item.get_channel_display }} · {{ item.get_call_result_display }}</b><span>{{ item.occurred_at|date:"d/m/Y à H:i" }} · {{ item.employee.get_full_name|default:item.employee.username|default:"Utilisateur supprimé" }}</span><p>{{ item.comment|default:"Aucun commentaire." }}</p><small>Statut : {{ item.get_renewal_status_display }}{% if item.next_follow_up %} · Relance : {{ item.next_follow_up|date:"d/m/Y H:i" }}{% endif %}</small></div></article>{% empty %}<p class="empty">Aucune interaction enregistrée.</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

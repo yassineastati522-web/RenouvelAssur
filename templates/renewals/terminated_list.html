@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}Contrats résiliés{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <span class="eyebrow">PORTEFEUILLE PERDU</span>
+    <h1>Contrats résiliés</h1>
+    <p>Suivez les motifs, les primes perdues et le nombre de résiliations par client.</p>
+  </div>
+</div>
+<section class="panel table-panel">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Assuré</th>
+          <th>Police</th>
+          <th>Contrats résiliés du client</th>
+          <th>Date</th>
+          <th>Motif</th>
+          <th>Prime perdue</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in terminations %}
+        <tr>
+          <td><a class="client-name" href="{% url 'contract_detail' item.contract.pk %}">{{ item.contract.client.name }}</a></td>
+          <td>{{ item.contract.policy_number }}</td>
+          <td><span class="status">{{ item.client_terminated_count }} contrat{{ item.client_terminated_count|pluralize }}</span></td>
+          <td>{{ item.date|date:"d/m/Y" }}</td>
+          <td>{{ item.reason|default:"Non renseigné" }}</td>
+          <td><b>{{ item.contract.total_premium|default_if_none:0|floatformat:2 }}</b> MAD</td>
+          <td><a class="arrow-btn" href="{% url 'contract_detail' item.contract.pk %}">→</a></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="empty">Aucune résiliation enregistrée.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% include 'renewals/pagination.html' with page=terminations %}
+{% endblock %}

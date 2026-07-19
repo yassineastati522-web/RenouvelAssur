@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% block title %}{{ title }}{% endblock %}{% block content %}
+<div class="page-head"><div><span class="eyebrow">PORTEFEUILLE</span><h1>{{ title }}</h1><p>Recherchez, filtrez et ouvrez une fiche pour enregistrer un appel.</p></div></div>
+{% if not expired %}<div class="period-tabs"><a href="?days=7" class="{% if days == 7 %}active{% endif %}">7 jours</a><a href="?days=15" class="{% if days == 15 %}active{% endif %}">15 jours</a><a href="?days=30" class="{% if days == 30 %}active{% endif %}">30 jours</a><a href="?days=60" class="{% if days == 60 %}active{% endif %}">60 jours</a></div>{% endif %}
+<form class="filters"><input type="search" name="q" value="{{ request.GET.q }}" placeholder="Nom, téléphone, police, immatriculation…"><select name="status"><option value="">Tous les statuts</option>{% for value,label in statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><input name="agent" value="{{ request.GET.agent }}" placeholder="Code agent"><input type="hidden" name="days" value="{{ days|default:30 }}"><button class="btn dark">Filtrer</button></form>
+<section class="panel table-panel">{% include 'renewals/contract_table.html' %}</section>{% include 'renewals/pagination.html' with page=contracts %}
+{% endblock %}

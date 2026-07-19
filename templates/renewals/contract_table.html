@@ -1,0 +1,20 @@
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Priorité</th><th>Assuré / Police</th><th>Contact</th><th>Véhicule</th><th>Prime TTC</th><th>Échéance</th><th>Dernier appel</th><th>Statut</th><th></th></tr></thead>
+    <tbody>
+      {% for contract in contracts %}
+      <tr>
+        <td><span class="priority {{ contract.priority }}">{% if contract.priority == 'urgent' %}Urgent{% elif contract.priority == 'high' %}Élevée{% elif contract.priority == 'done' %}Terminé{% elif contract.priority == 'closed' %}Clôturé{% else %}Normale{% endif %}</span></td>
+        <td><a class="client-name" href="{% url 'contract_detail' contract.pk %}">{{ contract.client.name }}</a><small>{{ contract.policy_number }}</small></td>
+        <td>{{ contract.client.phone|default:"Non renseigné" }}</td>
+        <td><b>{{ contract.brand|default:"—" }}</b><small>{{ contract.registration|default:"Immatriculation non renseignée" }}</small></td>
+        <td><b>{{ contract.total_premium|default_if_none:0|floatformat:2 }}</b> MAD</td>
+        <td><b>{{ contract.end_date|date:"d/m/Y" }}</b><small class="{% if contract.days_remaining <= 7 %}danger-text{% endif %}">{{ contract.days_remaining }} jour{{ contract.days_remaining|pluralize }}</small></td>
+        <td>{% with last=contract.last_interaction %}{% if last %}{{ last.get_call_result_display }}<small>{{ last.occurred_at|date:"d/m/Y H:i" }}</small>{% else %}<span class="muted">Pas encore appelé</span>{% endif %}{% endwith %}</td>
+        <td><span class="status">{{ contract.get_renewal_status_display }}</span></td>
+        <td><a class="arrow-btn" href="{% url 'contract_detail' contract.pk %}">→</a></td>
+      </tr>
+      {% empty %}<tr><td colspan="9" class="empty">Aucun contrat ne correspond aux critères.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>

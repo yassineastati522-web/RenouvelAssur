@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}Importation Excel{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <span class="eyebrow">DONNÉES</span>
+    <h1>Importer un bordereau Excel</h1>
+    <p>Ajoutez ou mettez à jour le portefeuille depuis un fichier XLSX.</p>
+  </div>
+</div>
+<div class="detail-grid">
+  <section class="panel upload">
+    <span class="eyebrow">NOUVEL IMPORT</span>
+    <h2>Déposer un fichier Excel</h2>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="dropzone">⇧
+        <label>{{ form.file.label }}{{ form.file }}</label>
+        <small>{{ form.file.help_text }}</small>
+      </div>
+      {{ form.file.errors }}
+      <button class="btn primary">Analyser et importer →</button>
+    </form>
+    <div class="import-notes">
+      <b>Détection automatique</b>
+      <p>Le système recherche la feuille et la ligne d’en-têtes les plus pertinentes, même si le tableau ne commence pas à la première ligne.</p>
+      <b>Colonnes minimales</b>
+      <p>Police, client/assuré et date d’échéance. Les libellés du bordereau tels que POLICE, CLIENT et DATE_ECHEANCE sont reconnus.</p>
+      <b>Données reconnues</b>
+      <p>Nature de l’événement, CIN, téléphone, dates, primes, net à payer, quittance, marque et immatriculation définitive ou provisoire.</p>
+      <b>Import des téléphones</b>
+      <p>Un fichier Excel contenant Téléphone et Police, CIN ou Client peut mettre à jour les coordonnées existantes.</p>
+      <b>Détection des doublons</b>
+      <p>La combinaison police + quittance sert de clé principale. Les lignes de total du bordereau sont ignorées.</p>
+    </div>
+  </section>
+  <aside class="panel">
+    <span class="eyebrow">JOURNAL</span>
+    <h2>Derniers imports</h2>
+    <div class="import-list">
+      {% for item in imports %}
+        <a href="{% url 'import_report' item.pk %}">
+          <b>{{ item.filename }}</b>
+          <span>{{ item.imported_at|date:"d/m/Y H:i" }} · {{ item.added_rows }} ajout(s), {{ item.rejected_rows }} rejet(s)</span>
+        </a>
+      {% empty %}
+        <p class="empty">Aucun import.</p>
+      {% endfor %}
+    </div>
+  </aside>
+</div>
+{% endblock %}

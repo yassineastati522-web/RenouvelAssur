@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% block title %}Checklist des appels{% endblock %}
+{% block content %}
+<div class="page-head call-page-head">
+  <div>
+    <span class="eyebrow">SUIVI TÉLÉPHONIQUE</span>
+    <h1>Checklist des appels</h1>
+    <p>Cochez visuellement les clients traités et enregistrez rapidement le résultat de chaque appel.</p>
+  </div>
+  <div class="call-summary">
+    <div><strong>{{ pending_count }}</strong><span>À appeler</span></div>
+    <div><strong>{{ completed_count }}</strong><span>Traités</span></div>
+    <div><strong>{{ total_count }}</strong><span>Total</span></div>
+  </div>
+</div>
+
+<form method="get" class="call-filters">
+  <input type="search" name="q" value="{{ query }}" placeholder="Rechercher un client, téléphone ou police…">
+  <select name="call_status">
+    <option value="all" {% if call_status == 'all' %}selected{% endif %}>Tous les clients</option>
+    <option value="pending" {% if call_status == 'pending' %}selected{% endif %}>À appeler</option>
+    <option value="completed" {% if call_status == 'completed' %}selected{% endif %}>Déjà traités</option>
+  </select>
+  <select name="due_filter" aria-label="Filtrer par date d’échéance">
+    <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Toutes les échéances</option>
+    <option value="gt7" {% if due_filter == 'gt7' %}selected{% endif %}>Échéance &gt; 7 jours</option>
+    <option value="gt15" {% if due_filter == 'gt15' %}selected{% endif %}>Échéance &gt; 15 jours</option>
+  </select>
+  <button class="btn dark">Filtrer</button>
+</form>
+
+<section class="panel table-panel call-panel">
+  <div class="panel-title">
+    <div><span class="eyebrow">LISTE DE TRAVAIL</span><h2>Clients à contacter</h2></div>
+    <span class="checklist-help">☑ = appel enregistré · Échéances ↑ croissantes</span>
+  </div>
+  <div class="table-wrap">
+    <table class="call-table">
+      <thead>
+        <tr><th>Fait</th><th>Client / Police</th><th>Téléphone</th><th>Véhicule</th><th>Échéance</th><th>Dernier appel</th><th>Nouvel appel</th></tr>
+      </thead>
+      <tbody>
+        {% for contract in contracts %}
+        <tr class="{% if contract.last_call_at %}call-completed{% endif %}">
+          <td>
+            <label class="call-check" title="{% if contract.last_call_at %}Appel traité{% else %}À appeler{% endif %}">
+              <input type="checkbox" disabled {% if contract.last_call_at %}checked{% endif %}>
+            </label>
+          </td>
+          <td>
+            <a class="client-name" href="{% url 'contract_detail' contract.pk %}">{{ contract.client.name }}</a>
+            <small>Police {{ contract.policy_number }} · {{ contract.get_renewal_status_display }}</small>
+          </td>
+          <td>
+            {% if contract.client.phone %}<a class="phone-link" href="tel:{{ contract.client.phone }}">{{ contract.client.phone }}</a>{% else %}<span class="muted">Non renseigné</span>{% endif %}
+          </td>
+          <td><b>{{ contract.brand|default:"—" }}</b><small>{{ contract.registration|default:"Immatriculation non renseignée" }}</small></td>
+          <td><b>{{ contract.end_date|date:"d/m/Y" }}</b><small>{{ contract.days_remaining }} jour{{ contract.days_remaining|pluralize }}</small></td>
+          <td>
+            <span class="call-status {{ contract.last_call_result|default:'pending' }}">{{ contract.last_call_label }}</span>
+            {% if contract.last_call_at %}<small>{{ contract.last_call_at|date:"d/m/Y H:i" }} · {{ contract.call_attempts }} tentative{{ contract.call_attempts|pluralize }}</small>{% endif %}
+          </td>
+          <td>
+            <form method="post" class="quick-call-form">
+              {% csrf_token %}
+              <input type="hidden" name="contract" value="{{ contract.pk }}">
+              <select name="call_result" required aria-label="Résultat de l’appel pour {{ contract.client.name }}">
+                <option value="">Choisir le résultat…</option>
+                {% for value, label in call_results %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+              </select>
+              <input type="text" name="comment" maxlength="500" placeholder="Note facultative">
+              <button class="btn primary" title="Enregistrer l’appel">Valider ✓</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="empty">Aucun client ne correspond à cette checklist.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if contracts.has_other_pages %}
+  <nav class="pagination">
+    {% if contracts.has_previous %}<a href="?page={{ contracts.previous_page_number }}&q={{ query|urlencode }}&call_status={{ call_status }}&due_filter={{ due_filter }}">← Précédent</a>{% endif %}
+    <span>Page {{ contracts.number }} sur {{ contracts.paginator.num_pages }}</span>
+    {% if contracts.has_next %}<a href="?page={{ contracts.next_page_number }}&q={{ query|urlencode }}&call_status={{ call_status }}&due_filter={{ due_filter }}">Suivant →</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+{% endblock %}
