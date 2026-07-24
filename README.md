@@ -69,6 +69,18 @@ python manage.py check --deploy
 
 Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, utiliser une clé `DJANGO_SECRET_KEY` longue, `DJANGO_DEBUG=0`, HTTPS, un serveur WSGI/ASGI et une sauvegarde régulière de la base. Le fichier `.env` n’est jamais versionné.
 
+## Déploiement sur Render avec Neon
+
+Le fichier `render.yaml` et le script `build.sh` préparent automatiquement le service Django, les fichiers statiques et les migrations.
+
+1. Dans Render, créer un **Blueprint** depuis le dépôt GitHub `yassineastati522-web/RenouvelAssur`.
+2. Lorsque Render le demande, renseigner `DATABASE_URL` avec l’URL PostgreSQL fournie par Neon, comprenant `sslmode=require`.
+3. Laisser Render générer `DJANGO_SECRET_KEY` et déployer la branche `main`.
+4. Vérifier `https://<service>.onrender.com/health/`, puis se connecter avec le compte administrateur déjà présent dans Neon.
+5. Pour un domaine personnalisé, ajouter le domaine dans Render, puis compléter `DJANGO_ALLOWED_HOSTS` et `DJANGO_CSRF_TRUSTED_ORIGINS`.
+
+Le plan gratuit est adapté à la validation uniquement, car il peut se mettre en veille. Utiliser une instance payante avant l’ouverture professionnelle.
+
 ## Structure
 
 - `renewals/models.py` : données et relations métier ;

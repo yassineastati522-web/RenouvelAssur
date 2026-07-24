@@ -6,7 +6,7 @@ from unittest.mock import patch
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -14,6 +14,14 @@ from openpyxl import Workbook
 
 from .models import CallInteraction, Client, Contract, Termination, User
 from .services import import_contracts
+
+
+class HealthCheckTests(SimpleTestCase):
+    def test_health_check_is_public(self):
+        response = self.client.get(reverse("health_check"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
 
 
 def excel_upload(rows, filename="contrats.xlsx", leading_sheet=None):
