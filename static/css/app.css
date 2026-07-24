@@ -1375,6 +1375,16 @@ td small {
 /* Responsive layout */
 
 @media (max-width: 1300px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-grid {
+    grid-template-columns: minmax(0, 1.5fr) minmax(290px, .8fr);
+  }
+}
+
+@media (min-width: 761px) and (max-width: 920px) {
   :root {
     --sidebar: 88px;
   }
@@ -1406,14 +1416,6 @@ td small {
   .user-card {
     justify-content: center;
     padding-inline: 0;
-  }
-
-  .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .detail-grid {
-    grid-template-columns: minmax(0, 1.5fr) minmax(290px, .8fr);
   }
 }
 
