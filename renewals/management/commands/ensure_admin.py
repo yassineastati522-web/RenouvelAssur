@@ -5,13 +5,13 @@ from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = "Cr?e le premier administrateur depuis les variables Vercel, si n?cessaire."
+    help = "Crée le premier administrateur depuis les variables Vercel, si nécessaire."
 
     def handle(self, *args, **options):
         password = os.environ.get("DJANGO_SUPERUSER_PASSWORD")
         if not password:
             self.stdout.write(
-                "DJANGO_SUPERUSER_PASSWORD absent : cr?ation administrateur ignor?e."
+                "DJANGO_SUPERUSER_PASSWORD absent : création administrateur ignorée."
             )
             return
 
@@ -43,5 +43,5 @@ class Command(BaseCommand):
         if changed_fields:
             user.save(update_fields=changed_fields)
 
-        action = "cr??" if created else "mis ? jour et v?rifi?"
+        action = "créé" if created else "mis à jour et vérifié"
         self.stdout.write(self.style.SUCCESS(f"Administrateur {username} {action}."))

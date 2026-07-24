@@ -83,5 +83,5 @@ LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 TERMINATION_EVENTS = [v.strip() for v in os.environ.get(
-    "TERMINATION_EVENTS", "R?siliation,Annulation,Avenant de r?siliation,Ristourne"
+    "TERMINATION_EVENTS", "Résiliation,Annulation,Avenant de résiliation,Ristourne"
 ).split(",") if v.strip()]
