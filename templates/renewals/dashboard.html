@@ -9,14 +9,14 @@
   </div>
   <a class="btn mosaic-btn" href="{% url 'contract_list' %}">
     <span>Voir les échéances</span>
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
   </a>
 </div>
 
 <div class="kpi-grid">
   <article class="kpi orange">
     <div class="kpi-icon">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
     </div>
     <small>EXPIRANT SOUS 30 JOURS</small>
     <strong>{{ stats.soon }}</strong>
@@ -24,7 +24,7 @@
   </article>
   <article class="kpi blue">
     <div class="kpi-icon">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h10l2 4v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9l2-4Z"/><path d="M5 9h14M9 5V3h6v2"/><circle cx="12" cy="14" r="2.5"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5h10l2 4v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9l2-4Z"/><path d="M5 9h14M9 5V3h6v2"/><circle cx="12" cy="14" r="2.5"/></svg>
     </div>
     <small>À RELANCER AUJOURD’HUI</small>
     <strong>{{ stats.due_today }}</strong>
@@ -32,7 +32,7 @@
   </article>
   <article class="kpi green">
     <div class="kpi-icon">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-9"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 12 4 4 8-9"/></svg>
     </div>
     <small>CONTRATS RENOUVELÉS</small>
     <strong>{{ stats.renewed }}</strong>
@@ -40,7 +40,7 @@
   </article>
   <article class="kpi red">
     <div class="kpi-icon">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v6m0 4h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v6m0 4h.01"/><circle cx="12" cy="12" r="9"/></svg>
     </div>
     <small>NON RENOUVELÉS</small>
     <strong>{{ stats.not_renewed }}</strong>
