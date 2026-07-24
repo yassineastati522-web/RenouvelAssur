@@ -1,56 +1,53 @@
 .call-result-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 9px;
 }
 
 .call-result-options > div label {
   display: flex;
+  min-height: 48px;
   align-items: center;
-  gap: 8px;
-  min-height: 46px;
+  gap: 9px;
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid #dbe3df;
-  border-radius: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: #f8faf9;
   cursor: pointer;
+  transition: border-color .16s ease, background .16s ease;
 }
 
 .call-result-options input[type="radio"] {
   width: auto;
+  min-height: auto;
   margin: 0;
-  accent-color: #176b54;
+  accent-color: var(--green);
 }
 
 .call-result-options > div:has(input:checked) label {
-  border-color: #176b54;
-  background: #e9f3ef;
-  color: #176b54;
-}
-
-@media (max-width: 720px) {
-  .call-result-options {
-    grid-template-columns: 1fr;
-  }
+  border-color: var(--green);
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .call-page-head {
-  gap: 24px;
+  gap: 28px;
 }
 
 .call-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(95px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(105px, 1fr));
+  gap: 9px;
 }
 
 .call-summary div {
-  min-width: 95px;
-  padding: 12px 16px;
-  border: 1px solid #e3e9e5;
-  border-radius: 9px;
+  min-width: 105px;
+  padding: 14px 17px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: #fff;
+  box-shadow: var(--shadow);
 }
 
 .call-summary strong,
@@ -59,25 +56,26 @@
 }
 
 .call-summary strong {
-  color: #176b54;
-  font: 700 22px Manrope, sans-serif;
+  color: var(--green);
+  font: 700 24px/1 "Manrope", sans-serif;
 }
 
 .call-summary span,
 .checklist-help {
-  color: #72807b;
+  margin-top: 6px;
+  color: var(--muted);
   font-size: 11px;
 }
 
 .call-filters {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) 190px 190px auto;
-  gap: 9px;
-  margin-bottom: 16px;
+  grid-template-columns: minmax(280px, 1fr) 195px 205px auto;
+  gap: 10px;
+  margin-bottom: 18px;
 }
 
 .call-table {
-  min-width: 1180px;
+  min-width: 1220px;
 }
 
 .call-table .call-completed {
@@ -86,28 +84,29 @@
 
 .call-check {
   display: inline-grid;
+  width: 29px;
+  height: 29px;
   place-items: center;
-  width: 28px;
-  height: 28px;
 }
 
 .call-check input[type="checkbox"] {
   width: 20px;
+  min-height: 20px;
   height: 20px;
   margin: 0;
-  accent-color: #176b54;
+  accent-color: var(--green);
   opacity: 1;
 }
 
 .phone-link {
-  color: #176b54;
+  color: var(--green);
   font-weight: 700;
 }
 
 .call-status {
   display: inline-block;
-  padding: 5px 8px;
-  border-radius: 5px;
+  padding: 6px 9px;
+  border-radius: 6px;
   background: #edf3f0;
   color: #44665b;
   font-size: 10px;
@@ -132,20 +131,20 @@
 
 .quick-call-form {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto;
-  gap: 7px;
-  min-width: 470px;
+  min-width: 500px;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  gap: 8px;
 }
 
 .quick-call-form select,
 .quick-call-form input,
 .quick-call-form .btn {
-  min-height: 39px;
+  min-height: 40px;
   padding-block: 8px;
 }
 
-@media (max-width: 720px) {
-  .call-page-head,
+@media (max-width: 760px) {
+  .call-result-options,
   .call-filters {
     grid-template-columns: 1fr;
   }
@@ -153,5 +152,14 @@
   .call-summary {
     width: 100%;
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .call-summary div {
+    min-width: 0;
+    padding: 12px;
+  }
+
+  .call-summary span {
+    font-size: 9px;
   }
 }

@@ -1,6 +1,56 @@
-{% extends 'base.html' %}{% load static %}
+{% extends 'base.html' %}
+{% load static %}
 {% block title %}Connexion — RenouvelAssur{% endblock %}
 {% block anonymous %}
-<div class="login-page"><section class="login-visual"><div class="visual-content"><div class="brand light"><span>RA</span><strong>Renouvel<span>Assur</span></strong></div><h1>Chaque échéance,<br><em>une opportunité.</em></h1><p>Centralisez vos contrats, organisez vos relances et améliorez le taux de fidélisation de votre agence.</p><div class="visual-stat"><b>Une vue claire.</b><span>Des relances au bon moment.</span></div></div></section>
-<section class="login-form"><form method="post">{% csrf_token %}<div class="mobile-brand brand"><span>RA</span><strong>Renouvel<span>Assur</span></strong></div><small>ESPACE SÉCURISÉ</small><h2>Heureux de vous revoir</h2><p>Connectez-vous pour accéder à votre espace.</p>{% if form.errors %}<div class="alert error">Identifiants incorrects. Veuillez réessayer.</div>{% endif %}<label>Nom d’utilisateur</label><input type="text" name="username" autofocus required placeholder="Votre identifiant"><label>Mot de passe</label><input type="password" name="password" required placeholder="••••••••"><button class="btn primary wide">Se connecter <span>→</span></button><footer>Application interne — Données protégées</footer></form></section></div>
+<main class="login-page">
+  <section class="login-visual" aria-label="Présentation de RenouvelAssur">
+    <div class="visual-content">
+      <div class="brand brand-light">
+        <span class="brand-mark">RA</span>
+        <strong>Renouvel<span>Assur</span></strong>
+      </div>
+      <div class="login-hero">
+        <h1>Chaque échéance,<br><em>une opportunité.</em></h1>
+        <p>Centralisez vos contrats, organisez vos relances et améliorez le taux de fidélisation de votre agence.</p>
+        <div class="visual-stat">
+          <b>Une vue claire.</b>
+          <span>Des relances au bon moment.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="login-form">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="mobile-brand brand">
+        <span class="brand-mark">RA</span>
+        <strong>Renouvel<span>Assur</span></strong>
+      </div>
+      <span class="eyebrow">ESPACE SÉCURISÉ</span>
+      <h2>Heureux de vous revoir</h2>
+      <p>Connectez-vous pour accéder à votre espace.</p>
+      {% if form.errors %}
+        <div class="alert error">Identifiants incorrects. Veuillez réessayer.</div>
+      {% endif %}
+      <div class="login-field">
+        <label for="id_username">Nom d’utilisateur</label>
+        <input id="id_username" type="text" name="username" value="{{ form.username.value|default:'' }}" autocomplete="username" autofocus required placeholder="Votre identifiant">
+      </div>
+      <div class="login-field">
+        <label for="id_password">Mot de passe</label>
+        <input id="id_password" type="password" name="password" autocomplete="current-password" required placeholder="••••••••">
+      </div>
+      <button class="btn primary wide login-submit" type="submit">
+        <span>Se connecter</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+      </button>
+      <footer>
+        <span class="secure-dot"></span>
+        Application interne — Données protégées
+      </footer>
+    </form>
+  </section>
+</main>
 {% endblock %}
