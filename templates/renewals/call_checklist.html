@@ -36,40 +36,49 @@
   </div>
   <div class="table-wrap">
     <table class="call-table">
+      <colgroup>
+        <col class="call-col-check">
+        <col class="call-col-client">
+        <col class="call-col-phone">
+        <col class="call-col-vehicle">
+        <col class="call-col-due">
+        <col class="call-col-last">
+        <col class="call-col-action">
+      </colgroup>
       <thead>
         <tr><th>Fait</th><th>Client / Police</th><th>Téléphone</th><th>Véhicule</th><th>Échéance</th><th>Dernier appel</th><th>Nouvel appel</th></tr>
       </thead>
       <tbody>
         {% for contract in contracts %}
         <tr class="{% if contract.last_call_at %}call-completed{% endif %}">
-          <td>
+          <td data-label="Fait">
             <label class="call-check" title="{% if contract.last_call_at %}Appel traité{% else %}À appeler{% endif %}">
               <input type="checkbox" disabled {% if contract.last_call_at %}checked{% endif %}>
             </label>
           </td>
-          <td>
+          <td data-label="Client / Police">
             <a class="client-name" href="{% url 'contract_detail' contract.pk %}">{{ contract.client.name }}</a>
             <small>Police {{ contract.policy_number }} · {{ contract.get_renewal_status_display }}</small>
           </td>
-          <td>
+          <td data-label="Téléphone">
             {% if contract.client.phone %}<a class="phone-link" href="tel:{{ contract.client.phone }}">{{ contract.client.phone }}</a>{% else %}<span class="muted">Non renseigné</span>{% endif %}
           </td>
-          <td><b>{{ contract.brand|default:"—" }}</b><small>{{ contract.registration|default:"Immatriculation non renseignée" }}</small></td>
-          <td><b>{{ contract.end_date|date:"d/m/Y" }}</b><small>{{ contract.days_remaining }} jour{{ contract.days_remaining|pluralize }}</small></td>
-          <td>
+          <td data-label="Véhicule"><b>{{ contract.brand|default:"—" }}</b><small>{{ contract.registration|default:"Immatriculation non renseignée" }}</small></td>
+          <td data-label="Échéance"><b>{{ contract.end_date|date:"d/m/Y" }}</b><small>{{ contract.days_remaining }} jour{{ contract.days_remaining|pluralize }}</small></td>
+          <td data-label="Dernier appel">
             <span class="call-status {{ contract.last_call_result|default:'pending' }}">{{ contract.last_call_label }}</span>
             {% if contract.last_call_at %}<small>{{ contract.last_call_at|date:"d/m/Y H:i" }} · {{ contract.call_attempts }} tentative{{ contract.call_attempts|pluralize }}</small>{% endif %}
           </td>
-          <td>
+          <td data-label="Nouvel appel">
             <form method="post" class="quick-call-form">
               {% csrf_token %}
               <input type="hidden" name="contract" value="{{ contract.pk }}">
               <select name="call_result" required aria-label="Résultat de l’appel pour {{ contract.client.name }}">
-                <option value="">Choisir le résultat…</option>
+                <option value="">Résultat…</option>
                 {% for value, label in call_results %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
               </select>
-              <input type="text" name="comment" maxlength="500" placeholder="Note facultative">
-              <button class="btn primary" title="Enregistrer l’appel">Valider ✓</button>
+              <input type="text" name="comment" maxlength="500" placeholder="Note…" aria-label="Note facultative pour {{ contract.client.name }}" autocomplete="off">
+              <button class="btn primary" title="Enregistrer l’appel">Valider</button>
             </form>
           </td>
         </tr>
