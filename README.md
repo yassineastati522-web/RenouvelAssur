@@ -6,7 +6,7 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 - authentification sécurisée et rôles Administrateur / Agent ;
 - tableau de bord : échéances, relances, renouvellements, primes et taux ;
-- import de bordereaux Excel XLSX avec détection automatique de la feuille et de la ligne d’en-têtes ;
+- import des échéances à venir et des bordereaux Excel avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
 - reconnaissance des colonnes du bordereau assureur, validation, mise à jour idempotente et rapport d’erreurs ;
 - liste des échéances à 7, 15, 30 ou 60 jours, recherche et filtres ;
 - fiche contrat avec trois résultats d’appel : Client appelé, Boîte vocale et Non joignable ;
@@ -43,7 +43,14 @@ Changez ces mots de passe avant toute utilisation réelle.
 
 ## Import Excel
 
-Seuls les fichiers `.xlsx` sont acceptés. Le système inspecte les premières lignes des feuilles du classeur afin de trouver automatiquement le tableau principal.
+Les fichiers `.xlsx` et les fichiers `.xls` fournis par l’assureur sont acceptés. Le système inspecte les premières lignes des feuilles du classeur afin de trouver automatiquement le tableau principal et son type.
+
+Deux formats métier sont reconnus :
+
+- le fichier des échéances à venir (`cat`, `numero_police`, `assure`, `date_debut`, `date_fin`, `marque`, `immatriculation`, etc.) alimente la liste des appels ;
+- le bordereau de production (`POLICE`, `Nature Evenement`, `PRIME_TOTAL`, `NUM_QUITTANCE`, etc.) complète les contrats avec les primes et les événements.
+
+La page d’importation présente une case dédiée à chaque format et refuse un fichier lorsqu’il est déposé dans la mauvaise case.
 
 Colonnes minimales : `Police`, `Client` ou `Assuré`, et `Date Échéance` ou `Date Fin`. Les en-têtes du bordereau fourni sont reconnus, notamment :
 
@@ -54,7 +61,7 @@ Colonnes minimales : `Police`, `Client` ou `Assuré`, et `Date Échéance` ou `D
 
 Les dates `JJ/MM/AAAA` et `AAAA-MM-JJ` sont acceptées. Les montants peuvent utiliser une virgule décimale. `IMMATDEF` est prioritaire sur `IMMAPRO`, avec repli automatique lorsque l’immatriculation définitive est vide. Les lignes de total du bordereau sont ignorées.
 
-La combinaison `Police + Quittance` identifie un contrat ; un nouvel import met donc à jour la fiche existante au lieu de la dupliquer.
+La combinaison `Police + Quittance` identifie un contrat. Pour le fichier d’échéances, `cat` et `numero_police` sont réunis automatiquement. Lorsque la même police et la même échéance sont retrouvées à un jour près, les deux sources sont fusionnées sans doublon. Les cellules vides ne remplacent jamais des informations déjà connues.
 
 Un second fichier Excel ne contenant que `Téléphone` et un identifiant (`Police`, `CIN` ou `Client`) peut mettre à jour les contacts existants.
 

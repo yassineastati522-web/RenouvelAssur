@@ -5,19 +5,34 @@ from .models import CallInteraction, Client, Contract
 
 class ImportForm(forms.Form):
     file = forms.FileField(
-        label="Fichier Excel des contrats",
-        help_text="Format accepté : .xlsx",
+        label="Fichier d’échéances ou bordereau Excel",
+        help_text="Formats acceptés : .xlsx et les fichiers .xls fournis par l’assureur.",
         widget=forms.ClearableFileInput(
             attrs={
-                "accept": ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "accept": ".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel",
             }
         ),
     )
 
+    def __init__(self, *args, import_type=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if import_type == "upcoming":
+            self.fields["file"].label = "Fichier des échéances à venir"
+            self.fields["file"].help_text = (
+                "Fichier .xls ou .xlsx contenant cat, numero_police, "
+                "date_debut et date_fin."
+            )
+        elif import_type == "bordereau":
+            self.fields["file"].label = "Bordereau de production"
+            self.fields["file"].help_text = (
+                "Fichier .xlsx ou .xls contenant POLICE, Nature Evenement, "
+                "PRIME_TOTAL et NUM_QUITTANCE."
+            )
+
     def clean_file(self):
         value = self.cleaned_data["file"]
-        if not value.name.lower().endswith(".xlsx"):
-            raise forms.ValidationError("Le fichier doit être au format Excel XLSX.")
+        if not value.name.lower().endswith((".xlsx", ".xls")):
+            raise forms.ValidationError("Le fichier doit être au format Excel (.xlsx ou .xls).")
         if value.size > 15 * 1024 * 1024:
             raise forms.ValidationError("Le fichier ne doit pas dépasser 15 Mo.")
         return value
