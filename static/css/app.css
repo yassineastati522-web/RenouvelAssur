@@ -1083,8 +1083,70 @@ td small {
 
 /* Imports */
 
+.import-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.import-card {
+  position: relative;
+  overflow: hidden;
+  border-top: 3px solid var(--green);
+}
+
+.import-card-upcoming {
+  border-top-color: var(--orange);
+}
+
+.import-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.import-card-head h2 {
+  max-width: 410px;
+  margin-top: 7px;
+}
+
+.import-kind-icon {
+  display: grid;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 12px;
+  background: #edf6f2;
+  color: var(--green);
+}
+
+.import-card-upcoming .import-kind-icon {
+  background: #fff3e6;
+  color: #c96c22;
+}
+
+.import-kind-icon svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.import-card-intro {
+  min-height: 48px;
+  margin: 10px 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .upload form {
-  margin-bottom: 25px;
+  margin-bottom: 18px;
 }
 
 .dropzone {
@@ -1096,6 +1158,17 @@ td small {
   color: var(--green);
   font-size: 28px;
   text-align: center;
+}
+
+.dropzone-arrow {
+  display: block;
+  color: var(--green);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.import-card-upcoming .dropzone-arrow {
+  color: #c96c22;
 }
 
 .dropzone label,
@@ -1113,6 +1186,45 @@ td small {
 
 .dropzone input {
   margin-top: 11px;
+}
+
+.import-card-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.import-card-points span {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #f2f6f4;
+  color: #60716f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.import-guidance {
+  display: grid;
+  grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr);
+  align-items: center;
+  gap: 28px;
+  margin-bottom: 18px;
+  background: linear-gradient(110deg, #f6faf8, #fff);
+}
+
+.import-guidance h2 {
+  margin-top: 7px;
+}
+
+.import-guidance p {
+  margin: 0;
+  color: #536563;
+}
+
+.import-history {
+  margin-bottom: 18px;
 }
 
 .import-notes {
@@ -1421,7 +1533,8 @@ td small {
 
 @media (max-width: 1050px) {
   .panel-row,
-  .detail-grid {
+  .detail-grid,
+  .import-choice-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1558,7 +1671,8 @@ td small {
   .kpi-grid,
   .panel-row,
   .money-grid,
-  .form-grid {
+  .form-grid,
+  .import-guidance {
     grid-template-columns: 1fr;
   }
 

@@ -58,6 +58,10 @@ class Contract(models.Model):
     effective_date = models.DateField("date d’effet", null=True, blank=True)
     end_date = models.DateField("date de fin", db_index=True)
     issue_date = models.DateField("date d’émission", null=True, blank=True)
+    from_upcoming_file = models.BooleanField(
+        "présent dans un fichier d’échéances",
+        default=False,
+    )
     renewal_status = models.CharField(max_length=20, choices=RenewalStatus.choices, default=RenewalStatus.TO_CONTACT, db_index=True)
     renewed_contract = models.OneToOneField("self", related_name="previous_contract", null=True, blank=True, on_delete=models.SET_NULL)
     manually_terminated = models.BooleanField(default=False)
@@ -85,7 +89,19 @@ class Contract(models.Model):
 
 
 class ImportBatch(models.Model):
+    class ImportType(models.TextChoices):
+        UPCOMING = "upcoming", "Échéances à venir"
+        BORDEREAU = "bordereau", "Bordereau de production"
+        CONTACTS = "contacts", "Mise à jour des contacts"
+        GENERAL = "general", "Fichier Excel standard"
+
     filename = models.CharField(max_length=255)
+    import_type = models.CharField(
+        "type d’import",
+        max_length=20,
+        choices=ImportType.choices,
+        default=ImportType.GENERAL,
+    )
     imported_at = models.DateTimeField(auto_now_add=True)
     imported_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
     total_rows = models.PositiveIntegerField(default=0)

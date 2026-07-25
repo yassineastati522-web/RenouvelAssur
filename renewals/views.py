@@ -251,17 +251,58 @@ def client_detail(request, pk):
 @login_required
 @user_passes_test(lambda u: u.is_agency_admin)
 def import_view(request):
-    form = ImportForm(request.POST or None, request.FILES or None)
-    if request.method == "POST" and form.is_valid():
-        upload = form.cleaned_data["file"]
-        try:
-            batch = import_contracts(upload, request.user)
-        except ValueError as exc:
-            form.add_error("file", str(exc))
+    allowed_types = {
+        ImportBatch.ImportType.UPCOMING,
+        ImportBatch.ImportType.BORDEREAU,
+    }
+    requested_type = request.POST.get("import_kind") if request.method == "POST" else None
+    upcoming_form = ImportForm(
+        request.POST if requested_type == ImportBatch.ImportType.UPCOMING else None,
+        request.FILES if requested_type == ImportBatch.ImportType.UPCOMING else None,
+        prefix="upcoming",
+        import_type=ImportBatch.ImportType.UPCOMING,
+    )
+    bordereau_form = ImportForm(
+        request.POST if requested_type == ImportBatch.ImportType.BORDEREAU else None,
+        request.FILES if requested_type == ImportBatch.ImportType.BORDEREAU else None,
+        prefix="bordereau",
+        import_type=ImportBatch.ImportType.BORDEREAU,
+    )
+
+    if request.method == "POST":
+        if requested_type not in allowed_types:
+            messages.error(request, "Choisissez l’un des deux types d’importation.")
         else:
-            messages.success(request, f"Import terminé : {batch.added_rows} ajout(s), {batch.updated_rows} mise(s) à jour, {batch.rejected_rows} rejet(s).")
-            return redirect("import_report", pk=batch.pk)
-    return render(request, "renewals/import.html", {"form": form, "imports": ImportBatch.objects.all().order_by("-imported_at")[:20]})
+            active_form = (
+                upcoming_form
+                if requested_type == ImportBatch.ImportType.UPCOMING
+                else bordereau_form
+            )
+            if active_form.is_valid():
+                upload = active_form.cleaned_data["file"]
+                try:
+                    batch = import_contracts(
+                        upload,
+                        request.user,
+                        expected_type=requested_type,
+                    )
+                except ValueError as exc:
+                    active_form.add_error("file", str(exc))
+                else:
+                    messages.success(
+                        request,
+                        f"{batch.get_import_type_display()} importé : "
+                        f"{batch.added_rows} ajout(s), "
+                        f"{batch.updated_rows} mise(s) à jour, "
+                        f"{batch.rejected_rows} rejet(s).",
+                    )
+                    return redirect("import_report", pk=batch.pk)
+
+    return render(request, "renewals/import.html", {
+        "upcoming_form": upcoming_form,
+        "bordereau_form": bordereau_form,
+        "imports": ImportBatch.objects.all().order_by("-imported_at")[:20],
+    })
 
 
 @login_required

@@ -12,7 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook
 
-from .models import CallInteraction, Client, Contract, Termination, User
+from .models import CallInteraction, Client, Contract, ImportBatch, Termination, User
 from .services import import_contracts
 
 
@@ -141,6 +141,90 @@ class ImportServiceTests(TestCase):
         self.assertEqual(str(contract.net_premium), "4286.78")
         self.assertEqual(str(contract.net_payable), "4562.82")
         self.assertEqual(contract.end_date.isoformat(), "2027-07-19")
+
+    def upcoming_upload(self, policy="0207161064", filename="echeances.xls"):
+        return excel_upload([
+            [
+                "cat", "numero_police", "assure", "telephone", "telephone2",
+                "adresse", "ville", "date_debut", "date_fin", "duree",
+                "marque", "modele", "immatriculation", "libelle_intermediaire",
+                "code_intermediaire", "Renouvele",
+            ],
+            [
+                "8", policy, "KAOURAR ABDERRAZEK", "", "0636310031",
+                "TEMARA", "TEMARA", "02/07/2026", "01/08/2026", "Ferme",
+                "MERCEDES", "CLASSE C", "53972-E-1", "Agence test",
+                "AG-01", "non renouvele",
+            ],
+        ], filename=filename)
+
+    def bordereau_upload(self, policy="8/0207161064", filename="bordereau.xlsx"):
+        return excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "NUMERO_CIN",
+                "DATE_EFFET", "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE",
+                "IMMATDEF", "TELEPHONE", "NUM_QUITTANCE", "PRIME_NET",
+                "DATE_EMISSION",
+            ],
+            [
+                policy, "Affaire nouvelle", "KAOURAR ABDERRAZEK", "CIN-001",
+                "02/07/2026", "02/08/2026", 650.66, "MERCEDES",
+                "53972-E-1", "0636310031", "146669035", 570.75,
+                "02/07/2026",
+            ],
+        ], filename=filename)
+
+    def test_upcoming_insurer_file_with_xls_name_is_supported_and_idempotent(self):
+        first = import_contracts(self.upcoming_upload(), self.admin)
+        second = import_contracts(self.upcoming_upload(), self.admin)
+
+        self.assertEqual(first.import_type, ImportBatch.ImportType.UPCOMING)
+        self.assertEqual((first.added_rows, first.rejected_rows), (1, 0))
+        self.assertEqual((second.updated_rows, second.rejected_rows), (1, 0))
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.select_related("client").get()
+        self.assertEqual(contract.policy_number, "8/0207161064")
+        self.assertEqual(contract.client.phone, "0636310031")
+        self.assertEqual(contract.brand, "MERCEDES")
+        self.assertEqual(contract.registration, "53972-E-1")
+        self.assertEqual(contract.agent_reference, "Agence test")
+        self.assertEqual(contract.agent_code, "AG-01")
+        self.assertEqual(contract.end_date.isoformat(), "2026-08-01")
+        self.assertTrue(contract.from_upcoming_file)
+        self.assertIsNone(contract.total_premium)
+
+    def test_bordereau_enriches_upcoming_contract_without_overwriting_due_date(self):
+        import_contracts(self.upcoming_upload(), self.admin)
+        batch = import_contracts(self.bordereau_upload(), self.admin)
+
+        self.assertEqual(batch.import_type, ImportBatch.ImportType.BORDEREAU)
+        self.assertEqual((batch.added_rows, batch.updated_rows, batch.rejected_rows), (0, 1, 0))
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.select_related("client").get()
+        self.assertEqual(contract.receipt, "146669035")
+        self.assertEqual(contract.event, "Affaire nouvelle")
+        self.assertEqual(str(contract.total_premium), "650.66")
+        self.assertEqual(str(contract.net_premium), "570.75")
+        self.assertEqual(contract.client.external_id, "CIN-001")
+        self.assertEqual(contract.end_date.isoformat(), "2026-08-01")
+        self.assertTrue(contract.from_upcoming_file)
+
+    def test_upcoming_file_enriches_existing_bordereau_contract_in_reverse_order(self):
+        import_contracts(self.bordereau_upload(policy="8/0207161123"), self.admin)
+        batch = import_contracts(
+            self.upcoming_upload(policy="0207161123"),
+            self.admin,
+        )
+
+        self.assertEqual((batch.added_rows, batch.updated_rows, batch.rejected_rows), (0, 1, 0))
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.policy_number, "8/0207161123")
+        self.assertEqual(contract.receipt, "146669035")
+        self.assertEqual(str(contract.total_premium), "650.66")
+        self.assertEqual(contract.event, "Affaire nouvelle")
+        self.assertEqual(contract.end_date.isoformat(), "2026-08-01")
+        self.assertTrue(contract.from_upcoming_file)
 
     def test_large_excel_import_uses_a_bounded_number_of_queries(self):
         rows = [["POLICE", "CLIENT", "NUMERO_CIN", "DATE_ECHEANCE", "NUM_QUITTANCE"]]
@@ -415,20 +499,81 @@ class ExcelImportFlowTests(TestCase):
         self.admin = User.objects.create_user("exceladmin", password="secret", role=User.Role.ADMIN)
         self.client.login(username="exceladmin", password="secret")
 
+    def test_import_page_shows_two_separate_upload_areas(self):
+        response = self.client.get(reverse("import_view"))
+
+        self.assertContains(response, "Importer le bordereau de production")
+        self.assertContains(response, "Importer les échéances à venir")
+        self.assertContains(response, 'name="bordereau-file"')
+        self.assertContains(response, 'name="upcoming-file"')
+
     def test_excel_is_imported_directly(self):
         upload = excel_upload([
             ["POLICE", "CLIENT", "DATE_ECHEANCE", "PRIME_TOTAL", "NUM_QUITTANCE"],
             ["XLSX-001", "Client Excel", "31/12/2026", 2450, "QX-1"],
         ])
-        response = self.client.post(reverse("import_view"), {"file": upload})
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
         self.assertRedirects(response, reverse("import_report", args=[1]))
         self.assertEqual(Contract.objects.get().policy_number, "XLSX-001")
 
+    def test_insurer_upcoming_xls_is_imported_from_the_web_form(self):
+        upload = excel_upload([
+            [
+                "cat", "numero_police", "assure", "telephone", "date_debut",
+                "date_fin", "marque", "immatriculation", "Renouvele",
+            ],
+            [
+                "8", "0207161064", "Client échéance", "0636310031",
+                "02/07/2026", "01/08/2026", "MERCEDES", "53972-E-1",
+                "non renouvele",
+            ],
+        ], filename="avis_echeances.xls")
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.UPCOMING,
+            "upcoming-file": upload,
+        })
+
+        self.assertRedirects(response, reverse("import_report", args=[1]))
+        batch = ImportBatch.objects.get()
+        self.assertEqual(batch.import_type, ImportBatch.ImportType.UPCOMING)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.policy_number, "8/0207161064")
+        self.assertTrue(contract.from_upcoming_file)
+
+    def test_file_is_rejected_when_uploaded_in_the_wrong_area(self):
+        upload = excel_upload([
+            [
+                "cat", "numero_police", "assure", "date_debut", "date_fin",
+                "Renouvele",
+            ],
+            [
+                "8", "0207161064", "Client échéance", "02/07/2026",
+                "01/08/2026", "non renouvele",
+            ],
+        ], filename="avis_echeances.xls")
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Échéances à venir")
+        self.assertContains(response, "Bordereau de production")
+        self.assertFalse(Contract.objects.exists())
+
     def test_pdf_is_rejected(self):
         upload = SimpleUploadedFile("contrats.pdf", b"%PDF-factice", content_type="application/pdf")
-        response = self.client.post(reverse("import_view"), {"file": upload})
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "format Excel XLSX")
+        self.assertContains(response, "format Excel")
         self.assertFalse(Contract.objects.exists())
 
     def test_corrupt_xlsx_is_reported_without_server_error(self):
@@ -437,6 +582,9 @@ class ExcelImportFlowTests(TestCase):
             b"ceci-n-est-pas-un-classeur",
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        response = self.client.post(reverse("import_view"), {"file": upload})
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Impossible de lire ce fichier Excel")
