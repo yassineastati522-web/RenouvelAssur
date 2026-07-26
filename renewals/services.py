@@ -63,6 +63,18 @@ def clean_policy(value):
     return re.sub(r"\s*/\s*", "/", clean_text(value))
 
 
+def canonical_policy(value, category=""):
+    policy = clean_policy(value)
+    category = clean_text(category)
+    if category and policy and "/" not in policy:
+        return f"{category}/{policy}"
+    return policy
+
+
+def normalized_identity(value):
+    return normalize(value).replace(" ", "")
+
+
 def detect_import_type(mapping):
     fields = set(mapping)
     if UPCOMING_SIGNATURE_FIELDS <= fields:
@@ -317,14 +329,36 @@ CONTRACT_VALUE_FIELDS = (
 def policy_from_row(row, mapping, import_type):
     policy = clean_policy(row_value(row, mapping, "policy_number"))
     category = clean_text(row_value(row, mapping, "category"))
-    if (
-        import_type == ImportBatch.ImportType.UPCOMING
-        and category
-        and policy
-        and "/" not in policy
-    ):
-        return f"{category}/{policy}"
+    if import_type == ImportBatch.ImportType.UPCOMING:
+        return canonical_policy(policy, category)
     return policy
+
+
+def item_fingerprint(item):
+    values = item["values"]
+    return (
+        canonical_policy(item["policy"], values["category"]),
+        normalized_identity(item["name"]),
+        normalized_identity(values["registration"]),
+        values["effective_date"],
+        values["end_date"],
+        normalize(values["event"]),
+        values["total_premium"],
+        values["net_premium"],
+    )
+
+
+def contract_fingerprint(contract):
+    return (
+        canonical_policy(contract.policy_number, contract.category),
+        normalized_identity(contract.client.name),
+        normalized_identity(contract.registration),
+        contract.effective_date,
+        contract.end_date,
+        normalize(contract.event),
+        contract.total_premium,
+        contract.net_premium,
+    )
 
 
 def indicates_renewed(value):
@@ -358,6 +392,7 @@ def select_contract_candidate(item, contracts, claimed_ids):
         candidates,
         key=lambda contract: (
             abs((contract.end_date - incoming_end).days),
+            contract.policy_number != item["policy"],
             not contract.from_upcoming_file,
             bool(contract.receipt),
             contract.pk,
@@ -382,6 +417,7 @@ def merge_contract_values(contract, item, client):
     if item["receipt"]:
         contract.receipt = item["receipt"]
     if item["import_type"] == ImportBatch.ImportType.UPCOMING:
+        contract.policy_number = item["policy"]
         contract.from_upcoming_file = True
 
 
@@ -439,6 +475,7 @@ def import_contract_rows(rows, filename, user):
                 "line": line_number,
                 "key": (policy, receipt),
                 "policy": policy,
+                "legacy_policy": clean_policy(row_value(row, mapping, "policy_number")),
                 "receipt": receipt,
                 "name": name,
                 "external_id": clean_text(row_value(row, mapping, "client_external_id")),
@@ -453,9 +490,46 @@ def import_contract_rows(rows, filename, user):
     if not parsed:
         return save_batch(batch)
 
+    unique_parsed = []
+    seen_fingerprints = {}
+    seen_keys = {}
+    for item in parsed:
+        fingerprint = item_fingerprint(item)
+        duplicate_line = seen_fingerprints.get(fingerprint)
+        if duplicate_line is not None:
+            record_error(
+                batch,
+                item["line"],
+                ValueError(f"doublon ignoré : même contrat que la ligne {duplicate_line}"),
+            )
+            continue
+        duplicate_key_line = seen_keys.get(item["key"])
+        if duplicate_key_line is not None:
+            record_error(
+                batch,
+                item["line"],
+                ValueError(
+                    "doublon ignoré : même police et même quittance "
+                    f"que la ligne {duplicate_key_line}"
+                ),
+            )
+            continue
+        seen_fingerprints[fingerprint] = item["line"]
+        seen_keys[item["key"]] = item["line"]
+        unique_parsed.append(item)
+    parsed = unique_parsed
+
+    if not parsed:
+        return save_batch(batch)
+
     try:
         with transaction.atomic():
-            policies = {item["policy"] for item in parsed}
+            policies = {
+                policy
+                for item in parsed
+                for policy in (item["policy"], item["legacy_policy"])
+                if policy
+            }
             existing_contract_list = list(
                 Contract.objects.select_related("client").filter(policy_number__in=policies)
             )
@@ -466,8 +540,46 @@ def import_contract_rows(rows, filename, user):
             contracts_by_policy = {}
             clients_by_policy = {}
             for contract in existing_contract_list:
-                contracts_by_policy.setdefault(contract.policy_number, []).append(contract)
-                clients_by_policy.setdefault(contract.policy_number, contract.client)
+                aliases = {
+                    contract.policy_number,
+                    canonical_policy(contract.policy_number, contract.category),
+                }
+                for policy in aliases:
+                    contracts_by_policy.setdefault(policy, []).append(contract)
+                    clients_by_policy.setdefault(policy, contract.client)
+
+            existing_fingerprints = {}
+            for contract in existing_contract_list:
+                existing_fingerprints.setdefault(contract_fingerprint(contract), contract)
+
+            filtered_parsed = []
+            for item in parsed:
+                duplicate_contract = existing_fingerprints.get(item_fingerprint(item))
+                exact_contract = existing_contracts.get(item["key"])
+                is_legacy_match = (
+                    duplicate_contract is not None
+                    and duplicate_contract.policy_number != item["policy"]
+                    and canonical_policy(
+                        duplicate_contract.policy_number,
+                        duplicate_contract.category,
+                    ) == canonical_policy(
+                        item["policy"],
+                        item["values"]["category"],
+                    )
+                    and duplicate_contract.receipt == item["receipt"]
+                )
+                if duplicate_contract is not None and exact_contract is None and not is_legacy_match:
+                    record_error(
+                        batch,
+                        item["line"],
+                        ValueError(
+                            "doublon ignoré : ce contrat existe déjà "
+                            f"(police {duplicate_contract.policy_number})"
+                        ),
+                    )
+                    continue
+                filtered_parsed.append(item)
+            parsed = filtered_parsed
 
             external_ids = {item["external_id"] for item in parsed if item["external_id"]}
             names = {item["name"].lower() for item in parsed}
@@ -586,6 +698,7 @@ def import_contract_rows(rows, filename, user):
                     changed_contracts,
                     [
                         "client",
+                        "policy_number",
                         "receipt",
                         *CONTRACT_VALUE_FIELDS,
                         "from_upcoming_file",
@@ -596,14 +709,42 @@ def import_contract_rows(rows, filename, user):
                 )
 
             terminated_ids = [contract.pk for contract in terminated_contracts]
-            existing_termination_ids = set(
-                Termination.objects.filter(contract_id__in=terminated_ids).values_list("contract_id", flat=True)
-            )
-            Termination.objects.bulk_create([
-                Termination(contract=contract, reason=contract.event, recorded_by=user)
-                for contract in terminated_contracts
-                if contract.pk not in existing_termination_ids
-            ], batch_size=500)
+            existing_terminations = {
+                termination.contract_id: termination
+                for termination in Termination.objects.filter(contract_id__in=terminated_ids)
+            }
+            new_terminations = []
+            changed_terminations = []
+            for contract in terminated_contracts:
+                termination_date = (
+                    contract.effective_date
+                    or contract.issue_date
+                    or timezone.localdate()
+                )
+                termination = existing_terminations.get(contract.pk)
+                if termination is None:
+                    new_terminations.append(
+                        Termination(
+                            contract=contract,
+                            date=termination_date,
+                            reason=contract.event,
+                            recorded_by=user,
+                        )
+                    )
+                elif (
+                    termination.date != termination_date
+                    or termination.reason != contract.event
+                ):
+                    termination.date = termination_date
+                    termination.reason = contract.event
+                    changed_terminations.append(termination)
+            Termination.objects.bulk_create(new_terminations, batch_size=500)
+            if changed_terminations:
+                Termination.objects.bulk_update(
+                    changed_terminations,
+                    ["date", "reason"],
+                    batch_size=500,
+                )
     except Exception as exc:
         batch.added_rows = 0
         batch.updated_rows = 0

@@ -38,6 +38,29 @@ class ImportForm(forms.Form):
         return value
 
 
+class ExpiredDateFilterForm(forms.Form):
+    date_from = forms.DateField(
+        label="Date d’échéance du",
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    date_to = forms.DateField(
+        label="Au",
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        date_from = cleaned.get("date_from")
+        date_to = cleaned.get("date_to")
+        if date_from and date_to and date_from > date_to:
+            raise forms.ValidationError(
+                "La date de début doit être antérieure ou égale à la date de fin."
+            )
+        return cleaned
+
+
 class InteractionForm(forms.ModelForm):
     next_follow_up = forms.DateTimeField(
         label="Prochaine relance",

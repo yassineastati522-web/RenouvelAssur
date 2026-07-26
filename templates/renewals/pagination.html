@@ -1,1 +1,11 @@
-{% if page.has_other_pages %}<nav class="pagination">{% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&q={{ request.GET.q }}&days={{ request.GET.days }}&status={{ request.GET.status }}">← Précédent</a>{% endif %}<span>Page {{ page.number }} sur {{ page.paginator.num_pages }}</span>{% if page.has_next %}<a href="?page={{ page.next_page_number }}&q={{ request.GET.q }}&days={{ request.GET.days }}&status={{ request.GET.status }}">Suivant →</a>{% endif %}</nav>{% endif %}
+{% if page.has_other_pages %}
+<nav class="pagination">
+  {% if page.has_previous %}
+    <a href="?page={{ page.previous_page_number }}&q={{ request.GET.q|urlencode }}&days={{ request.GET.days|urlencode }}&status={{ request.GET.status|urlencode }}&agent={{ request.GET.agent|urlencode }}&date_from={{ request.GET.date_from|urlencode }}&date_to={{ request.GET.date_to|urlencode }}">← Précédent</a>
+  {% endif %}
+  <span>Page {{ page.number }} sur {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}
+    <a href="?page={{ page.next_page_number }}&q={{ request.GET.q|urlencode }}&days={{ request.GET.days|urlencode }}&status={{ request.GET.status|urlencode }}&agent={{ request.GET.agent|urlencode }}&date_from={{ request.GET.date_from|urlencode }}&date_to={{ request.GET.date_to|urlencode }}">Suivant →</a>
+  {% endif %}
+</nav>
+{% endif %}
