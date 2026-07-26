@@ -8,7 +8,7 @@ from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
-from .forms import ClientForm, ImportForm, InteractionForm
+from .forms import ClientForm, ExpiredDateFilterForm, ImportForm, InteractionForm
 from .models import CallInteraction, Client, Contract, ImportBatch, Termination
 from .services import import_contracts
 
@@ -89,7 +89,20 @@ def expired_list(request):
     qs = exclude_terminated_contracts(
         scoped_contracts(request.user).filter(end_date__lt=timezone.localdate(), renewed_contract__isnull=True)
     ).exclude(renewal_status=Contract.RenewalStatus.RENEWED)
-    return render(request, "renewals/contract_list.html", {"contracts": paginate(request, apply_search(qs, request)), "statuses": Contract.RenewalStatus.choices, "title": "Clients non renouvelés", "expired": True})
+    date_filter_form = ExpiredDateFilterForm(request.GET or None)
+    if date_filter_form.is_valid():
+        date_from = date_filter_form.cleaned_data.get("date_from")
+        date_to = date_filter_form.cleaned_data.get("date_to")
+        if date_from:
+            qs = qs.filter(end_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(end_date__lte=date_to)
+    return render(request, "renewals/contract_list.html", {
+        "contracts": paginate(request, qs),
+        "title": "Clients non renouvelés",
+        "expired": True,
+        "date_filter_form": date_filter_form,
+    })
 
 
 @login_required
@@ -194,12 +207,15 @@ def call_checklist(request):
 
     due_filter = request.GET.get("due_filter", "all")
     today = timezone.localdate()
-    if due_filter == "gt7":
+    if due_filter == "expired":
+        contracts = contracts.filter(end_date__lt=today)
+    elif due_filter == "gt7":
         contracts = contracts.filter(end_date__gt=today + timedelta(days=7))
     elif due_filter == "gt15":
         contracts = contracts.filter(end_date__gt=today + timedelta(days=15))
     else:
         due_filter = "all"
+        contracts = contracts.filter(end_date__gte=today)
 
     total_count = contracts.count()
     pending_count = contracts.filter(last_call_at__isnull=True).count()

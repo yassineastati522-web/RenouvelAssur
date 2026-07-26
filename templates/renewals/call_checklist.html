@@ -22,7 +22,8 @@
     <option value="completed" {% if call_status == 'completed' %}selected{% endif %}>Déjà traités</option>
   </select>
   <select name="due_filter" aria-label="Filtrer par date d’échéance">
-    <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Toutes les échéances</option>
+    <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Échéances à venir</option>
+    <option value="expired" {% if due_filter == 'expired' %}selected{% endif %}>Déjà échus</option>
     <option value="gt7" {% if due_filter == 'gt7' %}selected{% endif %}>Échéance &gt; 7 jours</option>
     <option value="gt15" {% if due_filter == 'gt15' %}selected{% endif %}>Échéance &gt; 15 jours</option>
   </select>

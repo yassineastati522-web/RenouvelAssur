@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from io import BytesIO
 from unittest.mock import patch
 
@@ -78,6 +78,42 @@ class ImportServiceTests(TestCase):
         second = import_contracts(self.upload("1500"), self.admin)
         self.assertEqual((second.updated_rows, Contract.objects.count()), (1, 1))
         self.assertEqual(str(Contract.objects.get().total_premium), "1500.00")
+
+    def test_duplicate_rows_are_rejected_even_with_different_receipts(self):
+        rows = [
+            [
+                "Police", "Assuré", "Immatriculation", "Nature Evenement",
+                "Prime TTC", "Prime Net", "Quittance", "Date Effet", "Date Fin",
+            ],
+            [
+                "P-DUP", "Client Double", "123-A-4", "Affaire nouvelle",
+                1250, 1100, "Q-DUP-1", "01/01/2026", "31/12/2026",
+            ],
+            [
+                "P-DUP", "Client Double", "123-A-4", "Affaire nouvelle",
+                1250, 1100, "Q-DUP-2", "01/01/2026", "31/12/2026",
+            ],
+        ]
+
+        batch = import_contracts(excel_upload(rows), self.admin)
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 1))
+        self.assertEqual(Contract.objects.count(), 1)
+        self.assertIn("doublon ignoré", batch.errors[0]["error"])
+
+    def test_duplicate_already_in_database_is_rejected(self):
+        first = import_contracts(self.upload(), self.admin)
+        self.assertEqual(first.added_rows, 1)
+        duplicate = excel_upload([
+            ["Police", "Assuré", "Téléphone", "Immatriculation", "Prime TTC", "Quittance", "Date Effet", "Date Fin"],
+            ["P-001", "Client Test", "0611223344", "123-A-4", "1 250,50", "Q-02", "01/01/2026", "31/12/2026"],
+        ])
+
+        batch = import_contracts(duplicate, self.admin)
+
+        self.assertEqual((batch.added_rows, batch.updated_rows, batch.rejected_rows), (0, 0, 1))
+        self.assertEqual(Contract.objects.count(), 1)
+        self.assertEqual(Contract.objects.get().receipt, "Q-01")
 
     def test_bad_date_is_reported(self):
         upload = excel_upload([
@@ -192,6 +228,44 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.end_date.isoformat(), "2026-08-01")
         self.assertTrue(contract.from_upcoming_file)
         self.assertIsNone(contract.total_premium)
+
+    def test_upcoming_import_reuses_legacy_policy_without_category_prefix(self):
+        client = Client.objects.create(
+            name="KAOURAR ABDERRAZEK",
+            phone="0636310031",
+        )
+        Contract.objects.create(
+            client=client,
+            category="8",
+            policy_number="0207161064",
+            registration="53972-E-1",
+            effective_date=date(2026, 7, 2),
+            end_date=date(2026, 8, 1),
+        )
+
+        batch = import_contracts(self.upcoming_upload(), self.admin)
+
+        self.assertEqual((batch.added_rows, batch.updated_rows, batch.rejected_rows), (0, 1, 0))
+        self.assertEqual(Contract.objects.count(), 1)
+        self.assertEqual(Contract.objects.get().policy_number, "8/0207161064")
+
+    def test_termination_date_comes_from_the_effective_date(self):
+        upload = excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+                "DATE_ECHEANCE", "NUM_QUITTANCE", "DATE_EMISSION",
+            ],
+            [
+                "8/TERM-001", "Résiliation", "Client Résilié", "07/07/2026",
+                "31/12/2026", "Q-TERM-001", "06/07/2026",
+            ],
+        ])
+
+        batch = import_contracts(upload, self.admin)
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 0))
+        termination = Termination.objects.get()
+        self.assertEqual(termination.date.isoformat(), "2026-07-07")
 
     def test_bordereau_enriches_upcoming_contract_without_overwriting_due_date(self):
         import_contracts(self.upcoming_upload(), self.admin)
@@ -398,11 +472,26 @@ class ApplicationFlowTests(TestCase):
             receipt="Q-20",
             end_date=timezone.localdate() + timedelta(days=20),
         )
+        expired_client = Client.objects.create(name="Échéance déjà passée", phone="0633333333")
+        Contract.objects.create(
+            client=expired_client,
+            assigned_agent=self.user,
+            policy_number="POL-PAST",
+            receipt="Q-PAST",
+            end_date=timezone.localdate() - timedelta(days=2),
+        )
 
         all_response = self.client.get(reverse("call_checklist"), {"due_filter": "all"})
         content = all_response.content.decode()
+        self.assertNotContains(all_response, "POL-PAST")
         self.assertLess(content.index("POL-05"), content.index("POL-10"))
         self.assertLess(content.index("POL-10"), content.index("POL-20"))
+
+        expired = self.client.get(reverse("call_checklist"), {"due_filter": "expired"})
+        self.assertContains(expired, "POL-PAST")
+        self.assertNotContains(expired, "POL-05")
+        self.assertNotContains(expired, "POL-10")
+        self.assertNotContains(expired, "POL-20")
 
         after_7 = self.client.get(reverse("call_checklist"), {"due_filter": "gt7"})
         self.assertNotContains(after_7, "POL-05")
@@ -413,6 +502,29 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(after_15, "POL-05")
         self.assertNotContains(after_15, "POL-10")
         self.assertContains(after_15, "POL-20")
+
+    def test_non_renewed_list_filters_only_by_due_date_interval(self):
+        for days_ago, policy in ((20, "OLD-20"), (10, "OLD-10"), (2, "OLD-02")):
+            client = Client.objects.create(name=f"Client {policy}", phone="0600000000")
+            Contract.objects.create(
+                client=client,
+                assigned_agent=self.user,
+                policy_number=policy,
+                receipt=f"Q-{policy}",
+                end_date=timezone.localdate() - timedelta(days=days_ago),
+            )
+
+        response = self.client.get(reverse("expired_list"), {
+            "date_from": (timezone.localdate() - timedelta(days=15)).isoformat(),
+            "date_to": (timezone.localdate() - timedelta(days=5)).isoformat(),
+        })
+
+        self.assertEqual(response.context["contracts"].paginator.count, 1)
+        self.assertContains(response, "OLD-10")
+        self.assertNotContains(response, "OLD-20")
+        self.assertNotContains(response, "OLD-02")
+        self.assertNotContains(response, 'name="q"')
+        self.assertNotContains(response, 'name="status"')
 
     def test_terminated_list_shows_contract_count_per_client_within_agent_scope(self):
         self.contract.renewal_status = Contract.RenewalStatus.TERMINATED
