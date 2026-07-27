@@ -265,7 +265,6 @@ def client_detail(request, pk):
 
 
 @login_required
-@user_passes_test(lambda u: u.is_agency_admin)
 def import_view(request):
     allowed_types = {
         ImportBatch.ImportType.UPCOMING,
@@ -322,6 +321,5 @@ def import_view(request):
 
 
 @login_required
-@user_passes_test(lambda u: u.is_agency_admin)
 def import_report(request, pk):
     return render(request, "renewals/import_report.html", {"batch": get_object_or_404(ImportBatch, pk=pk)})

@@ -43,6 +43,8 @@ Changez ces mots de passe avant toute utilisation réelle.
 
 ## Import Excel
 
+La page d’importation et les rapports sont accessibles aux administrateurs et aux agents authentifiés. Chaque import conserve l’utilisateur qui l’a effectué.
+
 Les fichiers `.xlsx` et les fichiers `.xls` fournis par l’assureur sont acceptés. Le système inspecte les premières lignes des feuilles du classeur afin de trouver automatiquement le tableau principal et son type.
 
 Deux formats métier sont reconnus :
