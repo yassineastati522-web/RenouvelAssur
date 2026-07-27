@@ -2,7 +2,7 @@ services:
   - type: web
     name: renouvelassur
     runtime: python
-    plan: free
+    plan: starter
     region: frankfurt
     branch: main
     buildCommand: ./build.sh
