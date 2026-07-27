@@ -639,8 +639,29 @@ class ApplicationFlowTests(TestCase):
             self.assertNotContains(response, "TERM-MANUAL")
             self.assertNotContains(response, "TERM-RELATION")
 
-    def test_agent_cannot_import(self):
-        self.assertEqual(self.client.get(reverse("import_view")).status_code, 302)
+    def test_agent_can_import_excel_and_view_the_report(self):
+        import_page = self.client.get(reverse("import_view"))
+        self.assertEqual(import_page.status_code, 200)
+        self.assertContains(import_page, "Importer le bordereau de production")
+        self.assertContains(import_page, "Importer les échéances à venir")
+
+        upload = excel_upload([
+            ["POLICE", "CLIENT", "DATE_ECHEANCE", "PRIME_TOTAL", "NUM_QUITTANCE"],
+            ["AGENT-IMPORT-001", "Client importé par agent", "31/12/2026", 750, "QA-1"],
+        ])
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
+
+        batch = ImportBatch.objects.get()
+        self.assertRedirects(response, reverse("import_report", args=[batch.pk]))
+        self.assertEqual(batch.imported_by, self.user)
+        self.assertTrue(Contract.objects.filter(policy_number="AGENT-IMPORT-001").exists())
+
+        report = self.client.get(reverse("import_report", args=[batch.pk]))
+        self.assertEqual(report.status_code, 200)
+        self.assertContains(report, "Aucune erreur")
 
 
 class ExcelImportFlowTests(TestCase):
