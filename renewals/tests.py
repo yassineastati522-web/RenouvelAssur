@@ -503,6 +503,43 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(after_15, "POL-10")
         self.assertContains(after_15, "POL-20")
 
+    def test_pagination_uses_arrow_buttons_and_keeps_checklist_filters(self):
+        clients = [
+            Client(
+                name=f"Client pagination {index:02d}",
+                phone=f"0600{index:06d}",
+            )
+            for index in range(31)
+        ]
+        Client.objects.bulk_create(clients)
+        Contract.objects.bulk_create([
+            Contract(
+                client=client,
+                assigned_agent=self.user,
+                policy_number=f"PAGE-{index:02d}",
+                receipt=f"QP-{index:02d}",
+                end_date=timezone.localdate() + timedelta(days=index + 10),
+            )
+            for index, client in enumerate(clients)
+        ])
+
+        first_page = self.client.get(reverse("call_checklist"), {
+            "call_status": "pending",
+            "due_filter": "gt7",
+        })
+
+        self.assertContains(first_page, 'aria-label="Page suivante"')
+        self.assertContains(first_page, "call_status=pending")
+        self.assertContains(first_page, "due_filter=gt7")
+        self.assertNotContains(first_page, "Suivant →")
+        second_page = self.client.get(reverse("call_checklist"), {
+            "page": 2,
+            "call_status": "pending",
+            "due_filter": "gt7",
+        })
+        self.assertContains(second_page, 'aria-label="Page précédente"')
+        self.assertContains(second_page, "2 / 2")
+
     def test_non_renewed_list_filters_only_by_due_date_interval(self):
         for days_ago, policy in ((20, "OLD-20"), (10, "OLD-10"), (2, "OLD-02")):
             client = Client.objects.create(name=f"Client {policy}", phone="0600000000")

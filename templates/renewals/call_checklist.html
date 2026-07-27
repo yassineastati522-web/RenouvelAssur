@@ -89,12 +89,6 @@
       </tbody>
     </table>
   </div>
-  {% if contracts.has_other_pages %}
-  <nav class="pagination">
-    {% if contracts.has_previous %}<a href="?page={{ contracts.previous_page_number }}&q={{ query|urlencode }}&call_status={{ call_status }}&due_filter={{ due_filter }}">← Précédent</a>{% endif %}
-    <span>Page {{ contracts.number }} sur {{ contracts.paginator.num_pages }}</span>
-    {% if contracts.has_next %}<a href="?page={{ contracts.next_page_number }}&q={{ query|urlencode }}&call_status={{ call_status }}&due_filter={{ due_filter }}">Suivant →</a>{% endif %}
-  </nav>
-  {% endif %}
+  {% include 'renewals/pagination.html' with page=contracts %}
 </section>
 {% endblock %}
