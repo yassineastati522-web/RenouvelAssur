@@ -6,15 +6,15 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 - authentification sécurisée et rôles Administrateur / Agent ;
 - tableau de bord : échéances, relances, renouvellements, primes et taux ;
-- import des échéances à venir et des bordereaux Excel avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
+- import des échéances à venir, des bordereaux Excel et du suivi CSV/Excel des provisoires avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
 - reconnaissance des colonnes du bordereau assureur, validation, mise à jour idempotente et rapport d’erreurs ;
 - liste des échéances à 7, 15, 30 ou 60 jours, recherche et filtres ;
 - fiche contrat avec trois résultats d’appel : Client appelé, Boîte vocale et Non joignable ;
-- checklist des clients à appeler avec recherche, filtre et enregistrement rapide du résultat ;
+- checklist des clients à appeler avec recherche, filtre, identification des provisoires et enregistrement rapide du résultat ;
 - statut de renouvellement géré séparément du résultat d’appel ;
 - historique complet et non destructif des interactions ;
 - fiches clients, téléphone modifiable et portefeuille associé ;
-- contrats expirés sans renouvellement et résiliations ;
+- contrats expirés sans renouvellement et résiliations ; un nouveau contrat portant la même immatriculation marque automatiquement l’ancien comme renouvelé ;
 - suggestion « Injoignable » après trois tentatives infructueuses sur des jours distincts ;
 - administration des utilisateurs et attributions via `/admin/`.
 
@@ -41,16 +41,17 @@ Comptes de démonstration :
 
 Changez ces mots de passe avant toute utilisation réelle.
 
-## Import Excel
+## Import des fichiers
 
 La page d’importation et les rapports sont accessibles aux administrateurs et aux agents authentifiés. Chaque import conserve l’utilisateur qui l’a effectué.
 
-Les fichiers `.xlsx` et les fichiers `.xls` fournis par l’assureur sont acceptés. Le système inspecte les premières lignes des feuilles du classeur afin de trouver automatiquement le tableau principal et son type.
+Les fichiers `.xlsx` et les fichiers `.xls` fournis par l’assureur sont acceptés. La case « Suivi des provisoires » accepte aussi le CSV exporté par l’assureur. Le système inspecte les premières lignes afin de trouver automatiquement le tableau principal et son type.
 
-Deux formats métier sont reconnus :
+Trois formats métier sont reconnus :
 
 - le fichier des échéances à venir (`cat`, `numero_police`, `assure`, `date_debut`, `date_fin`, `marque`, `immatriculation`, etc.) alimente la liste des appels ;
 - le bordereau de production (`POLICE`, `Nature Evenement`, `PRIME_TOTAL`, `NUM_QUITTANCE`, etc.) complète les contrats avec les primes et les événements.
+- le suivi des provisoires (`Police`, `N° Attestation`, `Date d’écheance`, `Provisoires délivrées`, `Date Effet`, `Date fin/ Echéance`, etc.) calcule le quota autorisé et alimente la prochaine action de la checklist.
 
 La page d’importation présente une case dédiée à chaque format et refuse un fichier lorsqu’il est déposé dans la mauvaise case.
 
@@ -64,6 +65,10 @@ Colonnes minimales : `Police`, `Client` ou `Assuré`, et `Date Échéance` ou `D
 Les dates `JJ/MM/AAAA` et `AAAA-MM-JJ` sont acceptées. Les montants peuvent utiliser une virgule décimale. `IMMATDEF` est prioritaire sur `IMMAPRO`, avec repli automatique lorsque l’immatriculation définitive est vide. Les lignes de total du bordereau sont ignorées.
 
 La combinaison `Police + Quittance` identifie un contrat. Pour le fichier d’échéances, `cat` et `numero_police` sont réunis automatiquement. Lorsque la même police et la même échéance sont retrouvées à un jour près, les deux sources sont fusionnées sans doublon. Les cellules vides ne remplacent jamais des informations déjà connues.
+
+Pour le suivi provisoire, un contrat d’environ 3 mois autorise au maximum 1 provisoire, un contrat d’environ 6 mois en autorise 2 et un contrat annuel en autorise 3. Le client peut en choisir moins depuis sa fiche contrat, sans pouvoir descendre sous le nombre déjà délivré. Tant que le nombre choisi n’est pas atteint, la checklist affiche « Prochaine provisoire à remettre ». À la dernière provisoire retenue, elle affiche « Attestation définitive à remettre ». La date fournie dans le suivi reste la référence de la prochaine action.
+
+Après chaque import, les contrats portant la même immatriculation sont comparés. Lorsqu’un contrat plus récent commence à la fin de l’ancien et possède une échéance ultérieure, l’ancien est relié au nouveau et n’apparaît plus parmi les contrats non renouvelés.
 
 Un second fichier Excel ne contenant que `Téléphone` et un identifiant (`Police`, `CIN` ou `Client`) peut mettre à jour les contacts existants.
 

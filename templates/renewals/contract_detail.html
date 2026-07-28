@@ -9,7 +9,11 @@
     <p>Police {{ contract.policy_number }} · {{ contract.category|default:"Type non renseigné" }}</p>
   </div>
   <div class="deadline">
-    <small>ÉCHÉANCE</small><b>{{ contract.end_date|date:"d/m/Y" }}</b><span>{{ contract.days_remaining }} jours restants</span>
+    {% if contract.is_provisional %}
+      <small>ÉCHÉANCE PROVISOIRE</small><b>{{ contract.contact_due_date|date:"d/m/Y" }}</b><span>{{ contract.contact_days_remaining }} jours restants</span>
+    {% else %}
+      <small>ÉCHÉANCE</small><b>{{ contract.end_date|date:"d/m/Y" }}</b><span>{{ contract.days_remaining }} jours restants</span>
+    {% endif %}
   </div>
 </div>
 <div class="detail-grid">
@@ -29,9 +33,30 @@
       <dt>Immatriculation</dt><dd>{{ contract.registration|default:"—" }}</dd>
       <dt>Prime TTC</dt><dd>{{ contract.total_premium|default_if_none:0|floatformat:2 }} MAD</dd>
       <dt>Date d’effet</dt><dd>{{ contract.effective_date|date:"d/m/Y"|default:"—" }}</dd>
+      {% if contract.is_provisional %}
+        <dt>Suivi provisoire</dt><dd><span class="provisional-badge">Provisoire {{ contract.provisional_delivered_count }}/{{ contract.provisional_target_count }}</span></dd>
+        <dt>Maximum autorisé</dt><dd>{{ contract.provisional_allowed_count }} provisoire{{ contract.provisional_allowed_count|pluralize }}</dd>
+        <dt>Prochaine action</dt><dd>{{ contract.provisional_action_label }}</dd>
+        <dt>N° attestation</dt><dd>{{ contract.provisional_attestation|default:"—" }}</dd>
+        <dt>Fin du contrat</dt><dd>{{ contract.end_date|date:"d/m/Y" }}</dd>
+      {% endif %}
       <dt>Agent responsable</dt><dd>{{ contract.assigned_agent.get_full_name|default:contract.agent_code|default:"Non attribué" }}</dd>
       <dt>Événement</dt><dd>{{ contract.event|default:"—" }}</dd>
     </dl>
+    {% if contract.is_provisional %}
+      <div class="provisional-plan-box">
+        <span class="eyebrow">CHOIX DU CLIENT</span>
+        <p>Le maximum dépend de la durée du contrat, mais le client peut demander moins de provisoires.</p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="form_action" value="provisional_plan">
+          <label for="{{ provisional_plan_form.provisional_selected_count.id_for_label }}">{{ provisional_plan_form.provisional_selected_count.label }}</label>
+          {{ provisional_plan_form.provisional_selected_count }}
+          {{ provisional_plan_form.provisional_selected_count.errors }}
+          <button class="btn primary wide">Enregistrer le choix</button>
+        </form>
+      </div>
+    {% endif %}
     <a class="btn light wide" href="{% url 'client_detail' contract.client.pk %}">Voir la fiche client</a>
     {% if user.is_agency_admin %}<a class="btn danger wide delete-contract-link" href="{% url 'contract_delete' contract.pk %}">Supprimer ce contrat</a>{% endif %}
   </aside>

@@ -1,7 +1,9 @@
+import csv
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from io import StringIO
 from zipfile import BadZipFile
 
 from django.conf import settings
@@ -22,7 +24,7 @@ ALIASES = {
     "policy_number": ("police", "numero police", "n police"),
     "agent_reference": ("reference agent", "ref agent", "libelle intermediaire"),
     "agent_code": ("code agent", "code intermediaire"),
-    "event": ("nature evenement", "evenement", "event"),
+    "event": ("nature evenement", "nature evennement", "evenement", "event"),
     "renewed_flag": ("renouvele", "renouvellement", "statut renouvellement"),
     "pack_code": ("code pack convention", "code pack", "convention"),
     "client_name": ("client", "assure", "nom assure", "nom client"),
@@ -34,16 +36,40 @@ ALIASES = {
     "cash_premium": ("prime au comptant",),
     "total_premium": ("prime total", "prime totale", "prime ttc"),
     "net_payable": ("net a paye", "net a payer"),
-    "receipt": ("num quittance", "numero quittance", "quittance"),
+    "receipt": ("n quittance", "num quittance", "numero quittance", "quittance"),
     "effective_date": ("date effet", "date d effet", "date debut"),
-    "end_date": ("date echeance", "date fin", "date de fin"),
+    "end_date": ("date echeance", "date fin", "date de fin", "date fin echeance"),
     "issue_date": ("date emission", "date d emission"),
+    "provisional_attestation": (
+        "n attestation",
+        "numero attestation",
+        "attestation provisoire",
+    ),
+    "provisional_due_date": (
+        "date d echeance",
+        "echeance provisoire",
+    ),
+    "provisional_delivered_count": (
+        "provisoires delivrees",
+        "nombre provisoires delivrees",
+    ),
+    "provisional_status": ("etat contrat", "etat du contrat"),
 }
 
 REQUIRED_CONTRACT_FIELDS = {"policy_number", "client_name", "end_date"}
 SUMMARY_PREFIXES = ("nombre total", "total ht", "total ttc", "total general", "sous total")
 UPCOMING_SIGNATURE_FIELDS = {"category", "policy_number", "client_name", "effective_date", "end_date", "renewed_flag"}
 BORDEREAU_SIGNATURE_FIELDS = {"event", "receipt", "total_premium"}
+PROVISIONAL_SIGNATURE_FIELDS = {
+    "policy_number",
+    "client_name",
+    "registration",
+    "effective_date",
+    "end_date",
+    "provisional_attestation",
+    "provisional_due_date",
+    "provisional_delivered_count",
+}
 
 
 def normalize(value):
@@ -77,6 +103,8 @@ def normalized_identity(value):
 
 def detect_import_type(mapping):
     fields = set(mapping)
+    if PROVISIONAL_SIGNATURE_FIELDS <= fields:
+        return ImportBatch.ImportType.PROVISIONAL
     if UPCOMING_SIGNATURE_FIELDS <= fields:
         return ImportBatch.ImportType.UPCOMING
     if fields & BORDEREAU_SIGNATURE_FIELDS:
@@ -125,10 +153,36 @@ def find_header(rows, scan_limit=30):
     return best_index, best_mapping, best_rank
 
 
+def read_csv_rows(upload):
+    upload.seek(0)
+    content = upload.read()
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            text = content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if text.strip():
+            break
+    else:
+        raise ValueError("Impossible de décoder ce fichier CSV.")
+
+    first_line = next((line for line in text.splitlines() if line.strip()), "")
+    delimiter = ";" if first_line.count(";") >= first_line.count(",") else ","
+    rows = list(csv.reader(StringIO(text), delimiter=delimiter))
+    header_index, _mapping, _rank = find_header(rows)
+    return rows[header_index:] if rows else []
+
+
 def read_rows(upload):
-    """Lit le tableau Excel le plus pertinent et le recadre sur sa ligne d'en-têtes."""
-    if not upload.name.lower().endswith((".xlsx", ".xls")):
-        raise ValueError("Seuls les fichiers Excel .xlsx ou .xls sont acceptés.")
+    """Lit le tableau CSV/Excel pertinent et le recadre sur ses en-têtes."""
+    filename = upload.name.lower()
+    if filename.endswith(".csv"):
+        return read_csv_rows(upload)
+    if not filename.endswith((".xlsx", ".xls")):
+        raise ValueError(
+            "Seuls les fichiers .csv de suivi provisoire et les fichiers "
+            "Excel .xlsx ou .xls sont acceptés."
+        )
 
     upload.seek(0)
     try:
@@ -184,6 +238,43 @@ def parse_decimal(value):
         raise ValueError(f"montant invalide : {value}") from exc
 
 
+def parse_provisional_count(value):
+    text = clean_text(value)
+    try:
+        count = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"nombre de provisoires invalide : {text or 'vide'}") from exc
+    if count < 1 or count > 3:
+        raise ValueError("le nombre de provisoires délivrées doit être compris entre 1 et 3")
+    return count
+
+
+def provisional_quota(effective_date, end_date):
+    if not effective_date or not end_date or end_date <= effective_date:
+        raise ValueError("dates du contrat invalides pour calculer les provisoires")
+    duration_days = (end_date - effective_date).days
+    if duration_days <= 120:
+        return 1
+    if duration_days <= 240:
+        return 2
+    return 3
+
+
+def clean_provisional_status(value):
+    return clean_text(value).split("?", 1)[0].strip()
+
+
+def provisional_is_active(status):
+    normalized = normalize(status)
+    return normalized not in {
+        "sans effet",
+        "annule",
+        "annulee",
+        "termine",
+        "terminee",
+    }
+
+
 def is_summary_row(row, mapping):
     if row_value(row, mapping, "client_name") or row_value(row, mapping, "end_date"):
         return False
@@ -234,12 +325,36 @@ def analyze_rows(rows):
             else:
                 if not clean_text(row_value(row, mapping, "policy_number")) or not clean_text(row_value(row, mapping, "client_name")):
                     raise ValueError("police et assuré obligatoires")
-                if not parse_date(row_value(row, mapping, "end_date")):
+                end_date = parse_date(row_value(row, mapping, "end_date"))
+                if not end_date:
                     raise ValueError("date de fin obligatoire")
+                effective_date = parse_date(
+                    row_value(row, mapping, "effective_date")
+                )
                 for field in ("effective_date", "issue_date"):
                     parse_date(row_value(row, mapping, field))
                 for field in ("net_premium", "cash_premium", "total_premium", "net_payable"):
                     parse_decimal(row_value(row, mapping, field))
+                if analysis["import_type"] == ImportBatch.ImportType.PROVISIONAL:
+                    due_date = parse_date(
+                        row_value(row, mapping, "provisional_due_date")
+                    )
+                    delivered_count = parse_provisional_count(
+                        row_value(row, mapping, "provisional_delivered_count")
+                    )
+                    allowed_count = provisional_quota(effective_date, end_date)
+                    if not due_date:
+                        raise ValueError("date d’échéance provisoire obligatoire")
+                    if not effective_date <= due_date <= end_date:
+                        raise ValueError(
+                            "l’échéance provisoire doit être comprise dans "
+                            "la période du contrat"
+                        )
+                    if delivered_count > allowed_count:
+                        raise ValueError(
+                            f"{delivered_count} provisoires délivrées alors que "
+                            f"ce contrat en autorise {allowed_count}"
+                        )
         except Exception as exc:
             if len(analysis["errors"]) < 100:
                 analysis["errors"].append({"line": line_number, "error": str(exc)})
@@ -322,7 +437,10 @@ def import_contact_rows(candidates, mapping, batch):
 CONTRACT_VALUE_FIELDS = (
     "category", "agent_reference", "agent_code", "event", "pack_code", "brand",
     "registration", "net_premium", "cash_premium", "total_premium", "net_payable",
-    "effective_date", "end_date", "issue_date",
+    "effective_date", "end_date", "issue_date", "is_provisional",
+    "provisional_attestation", "provisional_due_date",
+    "provisional_delivered_count", "provisional_allowed_count",
+    "provisional_selected_count", "provisional_status",
 )
 
 
@@ -345,6 +463,9 @@ def item_fingerprint(item):
         normalize(values["event"]),
         values["total_premium"],
         values["net_premium"],
+        values.get("provisional_attestation", ""),
+        values.get("provisional_due_date"),
+        values.get("provisional_delivered_count", 0),
     )
 
 
@@ -358,6 +479,9 @@ def contract_fingerprint(contract):
         normalize(contract.event),
         contract.total_premium,
         contract.net_premium,
+        contract.provisional_attestation,
+        contract.provisional_due_date,
+        contract.provisional_delivered_count,
     )
 
 
@@ -414,11 +538,105 @@ def merge_contract_values(contract, item, client):
         if field == "end_date" and preserve_snapshot_end:
             continue
         setattr(contract, field, value)
+    if (
+        item["import_type"] == ImportBatch.ImportType.PROVISIONAL
+        and contract.provisional_selected_count
+        and incoming["provisional_delivered_count"]
+        > contract.provisional_selected_count
+    ):
+        contract.provisional_selected_count = incoming[
+            "provisional_delivered_count"
+        ]
     if item["receipt"]:
         contract.receipt = item["receipt"]
     if item["import_type"] == ImportBatch.ImportType.UPCOMING:
         contract.policy_number = item["policy"]
         contract.from_upcoming_file = True
+
+
+def mark_vehicle_renewals():
+    contracts = list(
+        Contract.objects.exclude(registration="").only(
+            "pk",
+            "registration",
+            "effective_date",
+            "issue_date",
+            "end_date",
+            "renewal_status",
+            "renewed_contract_id",
+            "manually_terminated",
+            "updated_at",
+        )
+    )
+    contracts_by_vehicle = {}
+    for contract in contracts:
+        vehicle_key = normalized_identity(contract.registration)
+        if vehicle_key:
+            contracts_by_vehicle.setdefault(vehicle_key, []).append(contract)
+
+    changed = {}
+    now = timezone.now()
+    claimed_successors = {
+        contract.renewed_contract_id: contract.pk
+        for contract in contracts
+        if contract.renewed_contract_id
+    }
+    for vehicle_contracts in contracts_by_vehicle.values():
+        for old_contract in sorted(
+            vehicle_contracts,
+            key=lambda contract: (contract.end_date, contract.pk),
+        ):
+            if (
+                old_contract.manually_terminated
+                or old_contract.renewal_status
+                == Contract.RenewalStatus.TERMINATED
+            ):
+                continue
+            earliest_start = old_contract.end_date - timedelta(days=1)
+            successors = []
+            for candidate in vehicle_contracts:
+                candidate_start = (
+                    candidate.effective_date or candidate.issue_date
+                )
+                if (
+                    candidate.pk != old_contract.pk
+                    and candidate_start
+                    and candidate_start >= earliest_start
+                    and candidate.end_date > old_contract.end_date
+                    and not candidate.manually_terminated
+                    and candidate.renewal_status
+                    != Contract.RenewalStatus.TERMINATED
+                    and claimed_successors.get(candidate.pk)
+                    in (None, old_contract.pk)
+                ):
+                    successors.append((candidate_start, candidate.end_date, candidate.pk, candidate))
+            if not successors:
+                continue
+            successor = min(successors, key=lambda item: item[:3])[3]
+            if (
+                old_contract.renewed_contract_id != successor.pk
+                or old_contract.renewal_status
+                != Contract.RenewalStatus.RENEWED
+            ):
+                if (
+                    old_contract.renewed_contract_id
+                    and claimed_successors.get(old_contract.renewed_contract_id)
+                    == old_contract.pk
+                ):
+                    claimed_successors.pop(old_contract.renewed_contract_id)
+                old_contract.renewed_contract = successor
+                old_contract.renewal_status = Contract.RenewalStatus.RENEWED
+                old_contract.updated_at = now
+                claimed_successors[successor.pk] = old_contract.pk
+                changed[old_contract.pk] = old_contract
+
+    if changed:
+        Contract.objects.bulk_update(
+            changed.values(),
+            ["renewed_contract", "renewal_status", "updated_at"],
+            batch_size=500,
+        )
+    return len(changed)
 
 
 def import_contract_rows(rows, filename, user):
@@ -471,6 +689,44 @@ def import_contract_rows(rows, filename, user):
             }
             if not values["end_date"]:
                 raise ValueError("date de fin obligatoire")
+            if import_type == ImportBatch.ImportType.PROVISIONAL:
+                due_date = parse_date(
+                    row_value(row, mapping, "provisional_due_date")
+                )
+                delivered_count = parse_provisional_count(
+                    row_value(row, mapping, "provisional_delivered_count")
+                )
+                allowed_count = provisional_quota(
+                    values["effective_date"],
+                    values["end_date"],
+                )
+                if not due_date:
+                    raise ValueError("date d’échéance provisoire obligatoire")
+                if not values["effective_date"] <= due_date <= values["end_date"]:
+                    raise ValueError(
+                        "l’échéance provisoire doit être comprise dans "
+                        "la période du contrat"
+                    )
+                if delivered_count > allowed_count:
+                    raise ValueError(
+                        f"{delivered_count} provisoires délivrées alors que "
+                        f"ce contrat en autorise {allowed_count}"
+                    )
+                provisional_status = clean_provisional_status(
+                    row_value(row, mapping, "provisional_status")
+                )
+                values.update({
+                    "is_provisional": provisional_is_active(
+                        provisional_status
+                    ),
+                    "provisional_attestation": clean_text(
+                        row_value(row, mapping, "provisional_attestation")
+                    ),
+                    "provisional_due_date": due_date,
+                    "provisional_delivered_count": delivered_count,
+                    "provisional_allowed_count": allowed_count,
+                    "provisional_status": provisional_status,
+                })
             parsed.append({
                 "line": line_number,
                 "key": (policy, receipt),
@@ -745,6 +1001,7 @@ def import_contract_rows(rows, filename, user):
                     ["date", "reason"],
                     batch_size=500,
                 )
+            mark_vehicle_renewals()
     except Exception as exc:
         batch.added_rows = 0
         batch.updated_rows = 0

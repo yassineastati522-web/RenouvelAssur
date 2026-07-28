@@ -58,6 +58,39 @@ class Contract(models.Model):
     effective_date = models.DateField("date d’effet", null=True, blank=True)
     end_date = models.DateField("date de fin", db_index=True)
     issue_date = models.DateField("date d’émission", null=True, blank=True)
+    is_provisional = models.BooleanField("suivi provisoire actif", default=False, db_index=True)
+    provisional_attestation = models.CharField(
+        "attestation provisoire",
+        max_length=100,
+        blank=True,
+    )
+    provisional_due_date = models.DateField(
+        "échéance provisoire",
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    provisional_delivered_count = models.PositiveSmallIntegerField(
+        "provisoires délivrées",
+        default=0,
+    )
+    provisional_allowed_count = models.PositiveSmallIntegerField(
+        "provisoires autorisées",
+        default=0,
+    )
+    provisional_selected_count = models.PositiveSmallIntegerField(
+        "provisoires choisies",
+        default=0,
+        help_text=(
+            "0 signifie que le maximum autorisé est retenu tant que le client "
+            "n’a pas fait un autre choix."
+        ),
+    )
+    provisional_status = models.CharField(
+        "état du suivi provisoire",
+        max_length=100,
+        blank=True,
+    )
     from_upcoming_file = models.BooleanField(
         "présent dans un fichier d’échéances",
         default=False,
@@ -76,6 +109,41 @@ class Contract(models.Model):
     @property
     def days_remaining(self): return (self.end_date - timezone.localdate()).days
     @property
+    def contact_due_date(self):
+        if self.is_provisional and self.provisional_due_date:
+            return self.provisional_due_date
+        return self.end_date
+    @property
+    def contact_days_remaining(self):
+        return (self.contact_due_date - timezone.localdate()).days
+    @property
+    def provisional_remaining_count(self):
+        return max(
+            self.provisional_target_count - self.provisional_delivered_count,
+            0,
+        )
+    @property
+    def provisional_target_count(self):
+        selected = (
+            self.provisional_selected_count
+            or self.provisional_allowed_count
+        )
+        return max(selected, self.provisional_delivered_count)
+    @property
+    def has_custom_provisional_plan(self):
+        return bool(
+            self.provisional_selected_count
+            and self.provisional_selected_count
+            != self.provisional_allowed_count
+        )
+    @property
+    def provisional_action_label(self):
+        if not self.is_provisional:
+            return ""
+        if self.provisional_remaining_count:
+            return "Prochaine provisoire à remettre"
+        return "Attestation définitive à remettre"
+    @property
     def is_terminated(self): return self.manually_terminated or self.renewal_status == self.RenewalStatus.TERMINATED
     @property
     def priority(self):
@@ -92,6 +160,7 @@ class ImportBatch(models.Model):
     class ImportType(models.TextChoices):
         UPCOMING = "upcoming", "Échéances à venir"
         BORDEREAU = "bordereau", "Bordereau de production"
+        PROVISIONAL = "provisional", "Suivi des provisoires"
         CONTACTS = "contacts", "Mise à jour des contacts"
         GENERAL = "general", "Fichier Excel standard"
 

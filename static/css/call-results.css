@@ -149,6 +149,33 @@
   background: #fbfdfc;
 }
 
+.call-table .call-provisional {
+  background: linear-gradient(90deg, #f4f9fc 0, #fff 14%);
+  box-shadow: inset 3px 0 #397eaa;
+}
+
+.call-table .call-provisional.call-completed {
+  background: linear-gradient(90deg, #edf6f3 0, #fbfdfc 14%);
+}
+
+.provisional-badge {
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #e6f2f9;
+  color: #256a94;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .35px;
+  white-space: nowrap;
+}
+
+.call-table .provisional-note {
+  color: #397eaa;
+  font-weight: 700;
+}
+
 .call-check {
   display: inline-grid;
   width: 29px;

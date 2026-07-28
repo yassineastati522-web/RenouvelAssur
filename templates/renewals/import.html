@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Importation Excel{% endblock %}
+{% block title %}Importation des fichiers{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -71,14 +71,45 @@
       <span>date_fin</span>
     </div>
   </section>
+
+  <section class="panel upload import-card import-card-provisional">
+    <div class="import-card-head">
+      <div>
+        <span class="eyebrow">PROVISOIRES</span>
+        <h2>Importer le suivi des provisoires</h2>
+      </div>
+      <span class="import-kind-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h3"/><path d="m15 16 1.5 1.5L20 14"/></svg>
+      </span>
+    </div>
+    <p class="import-card-intro">Utilisez cette case pour suivre les attestations provisoires déjà délivrées et la prochaine action à effectuer.</p>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <input type="hidden" name="import_kind" value="provisional">
+      <div class="dropzone">
+        <span class="dropzone-arrow">⇧</span>
+        <label for="{{ provisional_form.file.id_for_label }}">{{ provisional_form.file.label }}</label>
+        <small>{{ provisional_form.file.help_text }}</small>
+        {{ provisional_form.file }}
+      </div>
+      {{ provisional_form.file.errors }}
+      <button class="btn primary wide">Importer le suivi →</button>
+    </form>
+    <div class="import-card-points">
+      <span>Police</span>
+      <span>N° Attestation</span>
+      <span>Provisoires délivrées</span>
+      <span>Date d’échéance</span>
+    </div>
+  </section>
 </div>
 
 <section class="panel import-guidance">
   <div>
     <span class="eyebrow">FUSION AUTOMATIQUE</span>
-    <h2>Les deux fichiers se complètent</h2>
+    <h2>Les trois fichiers se complètent</h2>
   </div>
-  <p>Importez de préférence les échéances en premier, puis le bordereau. Le système rapproche la police et la date, conserve l’échéance prévue et complète ensuite la prime et l’événement sans créer de doublon. Les lignes déjà présentes ou répétées dans le fichier sont ignorées et signalées dans le rapport d’import.</p>
+  <p>Importez de préférence les échéances en premier, puis le bordereau et le suivi des provisoires. Le système rapproche la police et la date, complète les primes, suit le quota de provisoires selon la durée du contrat et utilise leur prochaine échéance dans la checklist. Les lignes déjà présentes ou répétées sont ignorées et signalées dans le rapport d’import.</p>
 </section>
 
 <section class="panel import-history">

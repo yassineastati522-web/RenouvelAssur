@@ -1043,6 +1043,33 @@ td small {
   overflow-wrap: anywhere;
 }
 
+.provisional-plan-box {
+  margin: 4px 0 17px;
+  padding: 15px;
+  border: 1px solid #c9dce7;
+  border-radius: 10px;
+  background: #f4f9fc;
+}
+
+.provisional-plan-box p {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.provisional-plan-box label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.provisional-plan-box select {
+  margin-bottom: 9px;
+}
+
 .delete-contract-link {
   margin-top: 9px;
 }
@@ -1128,7 +1155,7 @@ td small {
 
 .import-choice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 18px;
   margin-bottom: 18px;
 }
@@ -1141,6 +1168,10 @@ td small {
 
 .import-card-upcoming {
   border-top-color: var(--orange);
+}
+
+.import-card-provisional {
+  border-top-color: #397eaa;
 }
 
 .import-card-head {
@@ -1169,6 +1200,20 @@ td small {
 .import-card-upcoming .import-kind-icon {
   background: #fff3e6;
   color: #c96c22;
+}
+
+.import-card-provisional .import-kind-icon {
+  background: #eaf4fa;
+  color: #397eaa;
+}
+
+.import-card-provisional .dropzone {
+  border-color: #b7cfdf;
+  background: linear-gradient(145deg, #f7fbfd, #edf5fa);
+}
+
+.import-card-provisional .dropzone-arrow {
+  color: #397eaa;
 }
 
 .import-kind-icon svg {
