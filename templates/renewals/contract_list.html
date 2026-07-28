@@ -31,21 +31,18 @@
   </form>
 {% else %}
   <div class="period-tabs">
-    <a href="?days=7" class="{% if days == 7 %}active{% endif %}">7 jours</a>
-    <a href="?days=15" class="{% if days == 15 %}active{% endif %}">15 jours</a>
-    <a href="?days=30" class="{% if days == 30 %}active{% endif %}">30 jours</a>
-    <a href="?days=60" class="{% if days == 60 %}active{% endif %}">60 jours</a>
+    <a href="?period=minus15&amp;status={{ selected_status }}&amp;q={{ request.GET.q|urlencode }}" class="{% if period == 'minus15' %}active{% endif %}">−15 jours</a>
+    <a href="?period=minus7&amp;status={{ selected_status }}&amp;q={{ request.GET.q|urlencode }}" class="{% if period == 'minus7' %}active{% endif %}">−7 jours</a>
+    <a href="?period=plus7&amp;status={{ selected_status }}&amp;q={{ request.GET.q|urlencode }}" class="{% if period == 'plus7' %}active{% endif %}">+7 jours</a>
+    <a href="?period=plus15&amp;status={{ selected_status }}&amp;q={{ request.GET.q|urlencode }}" class="{% if period == 'plus15' %}active{% endif %}">+15 jours</a>
   </div>
-  <form class="filters">
+  <form class="filters renewal-list-filters">
     <input type="search" name="q" value="{{ request.GET.q }}" placeholder="Nom, téléphone, police, immatriculation…">
     <select name="status">
-      <option value="">Tous les statuts</option>
-      {% for value,label in statuses %}
-        <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
+      <option value="not_renewed" {% if selected_status == 'not_renewed' %}selected{% endif %}>Non renouvelé</option>
+      <option value="renewed" {% if selected_status == 'renewed' %}selected{% endif %}>Renouvelé</option>
     </select>
-    <input name="agent" value="{{ request.GET.agent }}" placeholder="Code agent">
-    <input type="hidden" name="days" value="{{ days|default:30 }}">
+    <input type="hidden" name="period" value="{{ period|default:'plus15' }}">
     <button class="btn dark">Filtrer</button>
   </form>
 {% endif %}

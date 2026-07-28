@@ -487,6 +487,99 @@ class ApplicationFlowTests(TestCase):
         self.assertContains(detail, "Marque")
         self.assertContains(detail, "DACIA")
 
+    def test_renewal_list_uses_relative_periods_and_two_statuses(self):
+        past_client = Client.objects.create(
+            name="Client échu depuis dix jours",
+            phone="0600000010",
+        )
+        Contract.objects.create(
+            client=past_client,
+            assigned_agent=self.user,
+            policy_number="PAST-10",
+            receipt="QP-10",
+            end_date=timezone.localdate() - timedelta(days=10),
+        )
+        future_client = Client.objects.create(
+            name="Client à dix jours",
+            phone="0600000020",
+        )
+        Contract.objects.create(
+            client=future_client,
+            assigned_agent=self.user,
+            policy_number="FUTURE-10",
+            receipt="QF-10",
+            end_date=timezone.localdate() + timedelta(days=10),
+        )
+        renewed_client = Client.objects.create(
+            name="Client renouvelé hors période",
+            phone="0600000030",
+        )
+        renewed = Contract.objects.create(
+            client=renewed_client,
+            assigned_agent=self.user,
+            policy_number="RENEWED-OLD",
+            receipt="QR-OLD",
+            end_date=timezone.localdate() - timedelta(days=40),
+            renewal_status=Contract.RenewalStatus.RENEWED,
+        )
+
+        minus_15 = self.client.get(reverse("contract_list"), {
+            "period": "minus15",
+            "status": "not_renewed",
+        })
+        self.assertContains(minus_15, "PAST-10")
+        minus_7 = self.client.get(reverse("contract_list"), {
+            "period": "minus7",
+            "status": "not_renewed",
+        })
+        self.assertNotContains(minus_7, "PAST-10")
+
+        plus_7 = self.client.get(reverse("contract_list"), {
+            "period": "plus7",
+            "status": "not_renewed",
+        })
+        self.assertContains(plus_7, self.contract.policy_number)
+        self.assertNotContains(plus_7, "FUTURE-10")
+        plus_15 = self.client.get(reverse("contract_list"), {
+            "period": "plus15",
+            "status": "not_renewed",
+        })
+        self.assertContains(plus_15, "FUTURE-10")
+
+        renewed_list = self.client.get(reverse("contract_list"), {
+            "period": "all",
+            "status": "renewed",
+        })
+        self.assertContains(renewed_list, renewed.policy_number)
+        self.assertNotContains(renewed_list, self.contract.policy_number)
+        self.assertContains(renewed_list, 'value="renewed" selected')
+        self.assertNotContains(renewed_list, 'name="agent"')
+        self.assertNotContains(renewed_list, "Tous les statuts")
+        self.assertNotContains(renewed_list, "À contacter</option>")
+
+    def test_dashboard_links_to_all_renewed_contracts_without_percentage(self):
+        renewed_client = Client.objects.create(
+            name="Client portefeuille conservé",
+            phone="0600000040",
+        )
+        Contract.objects.create(
+            client=renewed_client,
+            assigned_agent=self.user,
+            policy_number="RENEWED-DASHBOARD",
+            receipt="QR-DASHBOARD",
+            end_date=timezone.localdate() - timedelta(days=90),
+            renewal_status=Contract.RenewalStatus.RENEWED,
+        )
+
+        dashboard = self.client.get(reverse("dashboard"))
+
+        self.assertContains(
+            dashboard,
+            f'{reverse("contract_list")}?status=renewed&amp;period=all',
+        )
+        self.assertNotContains(dashboard, 'class="rate"')
+        self.assertNotContains(dashboard, 'role="progressbar"')
+
     def test_interaction_is_appended_and_status_updated(self):
         response = self.client.post(reverse("contract_detail", args=[self.contract.pk]), {
             "channel": "phone",

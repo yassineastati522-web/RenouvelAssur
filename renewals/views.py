@@ -44,9 +44,7 @@ def apply_search(qs, request):
     if query:
         qs = qs.filter(Q(client__name__icontains=query) | Q(client__phone__icontains=query) |
             Q(policy_number__icontains=query) | Q(registration__icontains=query) |
-            Q(receipt__icontains=query) | Q(agent_code__icontains=query))
-    if request.GET.get("status"): qs = qs.filter(renewal_status=request.GET["status"])
-    if request.GET.get("agent"): qs = qs.filter(agent_code__icontains=request.GET["agent"])
+            Q(receipt__icontains=query))
     return qs
 
 
@@ -58,22 +56,20 @@ def paginate(request, qs, per_page=25):
 def dashboard(request):
     today = timezone.localdate(); qs = scoped_contracts(request.user)
     soon = exclude_terminated_contracts(
-        qs.filter(end_date__range=(today, today + timedelta(days=30)))
+        qs.filter(end_date__range=(today, today + timedelta(days=15)))
     ).exclude(renewal_status=Contract.RenewalStatus.RENEWED)
     expired = exclude_terminated_contracts(
         qs.filter(end_date__lt=today)
     ).exclude(renewal_status=Contract.RenewalStatus.RENEWED)
     due_today = CallInteraction.objects.filter(contract__in=qs, next_follow_up__date__lte=today).values("contract").distinct().count()
     renewed = qs.filter(renewal_status=Contract.RenewalStatus.RENEWED)
-    decided = qs.filter(renewal_status__in=[Contract.RenewalStatus.RENEWED, Contract.RenewalStatus.REFUSED, Contract.RenewalStatus.COMPETITOR])
-    rate = round(renewed.count() * 100 / decided.count(), 1) if decided.exists() else 0
     stats = {
         "soon": soon.count(), "due_today": due_today,
         "answered": CallInteraction.objects.filter(contract__in=qs, call_result=CallInteraction.Result.ANSWERED).values("contract").distinct().count(),
         "unreachable": qs.filter(renewal_status=Contract.RenewalStatus.UNREACHABLE).count(), "renewed": renewed.count(),
         "not_renewed": expired.count(), "terminated": qs.filter(renewal_status=Contract.RenewalStatus.TERMINATED).count(),
         "at_risk": soon.aggregate(v=Sum("total_premium"))["v"] or Decimal("0"),
-        "renewed_premium": renewed.aggregate(v=Sum("total_premium"))["v"] or Decimal("0"), "rate": rate,
+        "renewed_premium": renewed.aggregate(v=Sum("total_premium"))["v"] or Decimal("0"),
     }
     return render(request, "renewals/dashboard.html", {"stats": stats, "upcoming": soon[:8], "followups": qs.filter(interactions__next_follow_up__date__lte=today).distinct()[:6]})
 
@@ -81,13 +77,39 @@ def dashboard(request):
 @login_required
 def contract_list(request):
     today = timezone.localdate()
-    try: days = min(max(int(request.GET.get("days", 30)), 1), 365)
-    except ValueError: days = 30
-    qs = exclude_terminated_contracts(
-        scoped_contracts(request.user).filter(end_date__range=(today, today + timedelta(days=days)))
-    ).exclude(renewal_status=Contract.RenewalStatus.RENEWED)
+    period = request.GET.get("period", "plus15")
+    period_ranges = {
+        "minus15": (today - timedelta(days=15), today - timedelta(days=1)),
+        "minus7": (today - timedelta(days=7), today - timedelta(days=1)),
+        "plus7": (today, today + timedelta(days=7)),
+        "plus15": (today, today + timedelta(days=15)),
+    }
+    if period not in {*period_ranges, "all"}:
+        period = "plus15"
+
+    selected_status = request.GET.get("status", "not_renewed")
+    if selected_status not in {"renewed", "not_renewed"}:
+        selected_status = "not_renewed"
+
+    qs = exclude_terminated_contracts(scoped_contracts(request.user))
+    if period != "all":
+        qs = qs.filter(end_date__range=period_ranges[period])
+
+    if selected_status == "renewed":
+        qs = qs.filter(renewal_status=Contract.RenewalStatus.RENEWED)
+    else:
+        qs = qs.exclude(
+            Q(renewal_status=Contract.RenewalStatus.RENEWED)
+            | Q(renewed_contract__isnull=False)
+        )
+
     qs = apply_search(qs, request)
-    return render(request, "renewals/contract_list.html", {"contracts": paginate(request, qs), "days": days, "statuses": Contract.RenewalStatus.choices, "title": "Contrats à renouveler"})
+    return render(request, "renewals/contract_list.html", {
+        "contracts": paginate(request, qs),
+        "period": period,
+        "selected_status": selected_status,
+        "title": "Contrats à renouveler",
+    })
 
 
 @login_required
