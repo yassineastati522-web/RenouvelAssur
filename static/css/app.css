@@ -626,27 +626,6 @@ textarea:focus {
   font-weight: 700;
 }
 
-.rate {
-  color: var(--green);
-  font: 800 30px/1 "Manrope", sans-serif;
-  letter-spacing: -1px;
-}
-
-.progress {
-  height: 9px;
-  overflow: hidden;
-  border-radius: 6px;
-  background: #e9eeec;
-}
-
-.progress i {
-  display: block;
-  height: 100%;
-  min-width: 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #0c7d64, #32a57f);
-}
-
 .money-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -862,6 +841,10 @@ td small {
   grid-template-columns: minmax(280px, 2fr) minmax(170px, 1fr) minmax(160px, 1fr) auto;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.renewal-list-filters {
+  grid-template-columns: minmax(280px, 2fr) minmax(180px, 1fr) auto;
 }
 
 .filters:has(input[name="q"]:only-of-type) {

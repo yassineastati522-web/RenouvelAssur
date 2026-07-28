@@ -1,13 +1,13 @@
 {% if page.has_other_pages %}
 <nav class="pagination" aria-label="Navigation entre les pages">
   {% if page.has_previous %}
-    <a class="pagination-arrow" href="?page={{ page.previous_page_number }}&q={{ request.GET.q|urlencode }}&days={{ request.GET.days|urlencode }}&status={{ request.GET.status|urlencode }}&agent={{ request.GET.agent|urlencode }}&date_from={{ request.GET.date_from|urlencode }}&date_to={{ request.GET.date_to|urlencode }}&call_status={{ request.GET.call_status|urlencode }}&due_filter={{ request.GET.due_filter|urlencode }}" aria-label="Page précédente" title="Page précédente">←</a>
+    <a class="pagination-arrow" href="?page={{ page.previous_page_number }}&q={{ request.GET.q|urlencode }}&period={{ request.GET.period|urlencode }}&status={{ request.GET.status|urlencode }}&date_from={{ request.GET.date_from|urlencode }}&date_to={{ request.GET.date_to|urlencode }}&call_status={{ request.GET.call_status|urlencode }}&due_filter={{ request.GET.due_filter|urlencode }}" aria-label="Page précédente" title="Page précédente">←</a>
   {% else %}
     <span class="pagination-arrow is-disabled" aria-hidden="true">←</span>
   {% endif %}
   <span class="pagination-status">{{ page.number }} / {{ page.paginator.num_pages }}</span>
   {% if page.has_next %}
-    <a class="pagination-arrow" href="?page={{ page.next_page_number }}&q={{ request.GET.q|urlencode }}&days={{ request.GET.days|urlencode }}&status={{ request.GET.status|urlencode }}&agent={{ request.GET.agent|urlencode }}&date_from={{ request.GET.date_from|urlencode }}&date_to={{ request.GET.date_to|urlencode }}&call_status={{ request.GET.call_status|urlencode }}&due_filter={{ request.GET.due_filter|urlencode }}" aria-label="Page suivante" title="Page suivante">→</a>
+    <a class="pagination-arrow" href="?page={{ page.next_page_number }}&q={{ request.GET.q|urlencode }}&period={{ request.GET.period|urlencode }}&status={{ request.GET.status|urlencode }}&date_from={{ request.GET.date_from|urlencode }}&date_to={{ request.GET.date_to|urlencode }}&call_status={{ request.GET.call_status|urlencode }}&due_filter={{ request.GET.due_filter|urlencode }}" aria-label="Page suivante" title="Page suivante">→</a>
   {% else %}
     <span class="pagination-arrow is-disabled" aria-hidden="true">→</span>
   {% endif %}

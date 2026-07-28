@@ -18,7 +18,7 @@
     <div class="kpi-icon">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
     </div>
-    <small>EXPIRANT SOUS 30 JOURS</small>
+    <small>EXPIRANT SOUS 15 JOURS</small>
     <strong>{{ stats.soon }}</strong>
     <a href="{% url 'contract_list' %}">Contrats à traiter <span>→</span></a>
   </article>
@@ -36,7 +36,7 @@
     </div>
     <small>CONTRATS RENOUVELÉS</small>
     <strong>{{ stats.renewed }}</strong>
-    <a href="{% url 'contract_list' %}?status=renewed">Portefeuille conservé <span>→</span></a>
+    <a href="{% url 'contract_list' %}?status=renewed&amp;period=all">Portefeuille conservé <span>→</span></a>
   </article>
   <article class="kpi red">
     <div class="kpi-icon">
@@ -52,10 +52,6 @@
   <section class="panel performance">
     <div class="panel-title">
       <div><span class="eyebrow">PERFORMANCE</span><h2>Renouvellements</h2></div>
-      <b class="rate">{{ stats.rate }}%</b>
-    </div>
-    <div class="progress" role="progressbar" aria-label="Taux de renouvellement" aria-valuenow="{{ stats.rate }}" aria-valuemin="0" aria-valuemax="100">
-      <i style="width:{{ stats.rate }}%"></i>
     </div>
     <div class="money-grid">
       <div><small>PRIMES À RISQUE</small><strong>{{ stats.at_risk|floatformat:0 }} <em>MAD</em></strong></div>
