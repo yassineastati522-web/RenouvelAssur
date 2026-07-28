@@ -43,6 +43,15 @@ def excel_upload(rows, filename="contrats.xlsx", leading_sheet=None):
     )
 
 
+def provisional_csv_upload(rows, filename="suivi_provisoires.csv"):
+    content = "\r\n".join(";".join(str(value) for value in row) for row in rows)
+    return SimpleUploadedFile(
+        filename,
+        content.encode("cp1252"),
+        content_type="text/csv",
+    )
+
+
 class EnsureAdminCommandTests(TestCase):
     @patch.dict(os.environ, {
         "DJANGO_SUPERUSER_USERNAME": "admin",
@@ -283,6 +292,143 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.end_date.isoformat(), "2026-08-01")
         self.assertTrue(contract.from_upcoming_file)
 
+    def test_provisional_csv_calculates_quota_and_updates_the_same_contract(self):
+        headers = [
+            "Police", "N° Attestation", "Date d'écheance",
+            "Provisoires délivrées", "Nature Evennement", "Assuré",
+            "Prime nette", "Prime TTC", "N° Quittance", "Immatriculation",
+            "Date Effet", "Date fin/ Echéance", "Date Emission",
+            "Etat Contrat",
+        ]
+        first_rows = [
+            headers,
+            [
+                "PROV-3", "ATT-3", "31/01/2026", 1, "Affaire nouvelle",
+                "Client trois mois", 500, 600, "QP-3", "111-A-1",
+                "01/01/2026", "01/04/2026", "01/01/2026", "En cours",
+            ],
+            [
+                "PROV-6", "ATT-6", "31/01/2026", 1, "Prorogation",
+                "Client six mois", 700, 800, "QP-6", "222-A-2",
+                "01/01/2026", "01/07/2026", "01/01/2026",
+                "En cours?_csrf=valeur-invalide",
+            ],
+            [
+                "PROV-12", "ATT-12", "01/04/2026", 3, "Prorogation",
+                "Client un an", 900, 1000, "QP-12", "333-A-3",
+                "01/01/2026", "01/01/2027", "01/01/2026", "En cours",
+            ],
+        ]
+
+        batch = import_contracts(
+            provisional_csv_upload(first_rows),
+            self.admin,
+            expected_type=ImportBatch.ImportType.PROVISIONAL,
+        )
+
+        self.assertEqual(batch.import_type, ImportBatch.ImportType.PROVISIONAL)
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (3, 0))
+        quotas = {
+            contract.policy_number: contract.provisional_allowed_count
+            for contract in Contract.objects.all()
+        }
+        self.assertEqual(quotas, {"PROV-3": 1, "PROV-6": 2, "PROV-12": 3})
+        six_month = Contract.objects.get(policy_number="PROV-6")
+        self.assertTrue(six_month.is_provisional)
+        self.assertEqual(six_month.provisional_delivered_count, 1)
+        self.assertEqual(six_month.provisional_status, "En cours")
+        self.assertEqual(
+            six_month.provisional_action_label,
+            "Prochaine provisoire à remettre",
+        )
+        annual = Contract.objects.get(policy_number="PROV-12")
+        self.assertEqual(
+            annual.provisional_action_label,
+            "Attestation définitive à remettre",
+        )
+
+        updated_rows = [
+            headers,
+            [
+                "PROV-6", "ATT-6-B", "02/03/2026", 2, "Prorogation",
+                "Client six mois", 700, 800, "QP-6", "222-A-2",
+                "01/01/2026", "01/07/2026", "01/01/2026", "En cours",
+            ],
+        ]
+        update_batch = import_contracts(
+            provisional_csv_upload(updated_rows),
+            self.admin,
+            expected_type=ImportBatch.ImportType.PROVISIONAL,
+        )
+
+        self.assertEqual(
+            (update_batch.added_rows, update_batch.updated_rows, update_batch.rejected_rows),
+            (0, 1, 0),
+        )
+        self.assertEqual(Contract.objects.count(), 3)
+        six_month.refresh_from_db()
+        self.assertEqual(six_month.provisional_delivered_count, 2)
+        self.assertEqual(six_month.provisional_attestation, "ATT-6-B")
+        self.assertEqual(six_month.provisional_due_date, date(2026, 3, 2))
+        self.assertEqual(
+            six_month.provisional_action_label,
+            "Attestation définitive à remettre",
+        )
+
+    def test_provisional_import_rejects_count_above_contract_quota(self):
+        upload = provisional_csv_upload([
+            [
+                "Police", "N° Attestation", "Date d'écheance",
+                "Provisoires délivrées", "Assuré", "N° Quittance",
+                "Immatriculation", "Date Effet", "Date fin/ Echéance",
+                "Etat Contrat",
+            ],
+            [
+                "PROV-INVALID", "ATT-X", "31/01/2026", 2,
+                "Client invalide", "QP-X", "444-A-4", "01/01/2026",
+                "01/04/2026", "En cours",
+            ],
+        ])
+
+        batch = import_contracts(
+            upload,
+            self.admin,
+            expected_type=ImportBatch.ImportType.PROVISIONAL,
+        )
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (0, 1))
+        self.assertIn("autorise 1", batch.errors[0]["error"])
+        self.assertFalse(Contract.objects.exists())
+
+    def test_new_contract_for_same_vehicle_marks_the_old_one_as_renewed(self):
+        old_client = Client.objects.create(name="Ancien assuré")
+        old_contract = Contract.objects.create(
+            client=old_client,
+            policy_number="OLD-VEHICLE",
+            receipt="OLD-Q",
+            registration="53972-E-1",
+            effective_date=date(2025, 7, 1),
+            end_date=date(2026, 7, 1),
+        )
+        upload = excel_upload([
+            [
+                "POLICE", "CLIENT", "DATE_EFFET", "DATE_ECHEANCE",
+                "IMMATDEF", "NUM_QUITTANCE",
+            ],
+            [
+                "NEW-VEHICLE", "Nouvel assuré", "02/07/2026",
+                "01/07/2027", "53972 E 1", "NEW-Q",
+            ],
+        ])
+
+        batch = import_contracts(upload, self.admin)
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 0))
+        new_contract = Contract.objects.get(policy_number="NEW-VEHICLE")
+        old_contract.refresh_from_db()
+        self.assertEqual(old_contract.renewal_status, Contract.RenewalStatus.RENEWED)
+        self.assertEqual(old_contract.renewed_contract, new_contract)
+
     def test_upcoming_file_enriches_existing_bordereau_contract_in_reverse_order(self):
         import_contracts(self.bordereau_upload(policy="8/0207161123"), self.admin)
         batch = import_contracts(
@@ -503,6 +649,73 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(after_15, "POL-10")
         self.assertContains(after_15, "POL-20")
 
+    def test_call_checklist_uses_and_explains_the_provisional_due_date(self):
+        provisional_client = Client.objects.create(
+            name="Client en provisoire",
+            phone="0644444444",
+        )
+        provisional = Contract.objects.create(
+            client=provisional_client,
+            assigned_agent=self.user,
+            policy_number="POL-PROV",
+            receipt="Q-PROV",
+            registration="888-A-8",
+            effective_date=timezone.localdate(),
+            end_date=timezone.localdate() + timedelta(days=180),
+            is_provisional=True,
+            provisional_attestation="ATT-PROV-1",
+            provisional_due_date=timezone.localdate() + timedelta(days=10),
+            provisional_delivered_count=1,
+            provisional_allowed_count=2,
+            provisional_status="En cours",
+        )
+
+        response = self.client.get(reverse("call_checklist"))
+
+        self.assertContains(response, "POL-PROV")
+        self.assertContains(response, "Provisoire 1/2")
+        self.assertContains(response, "Prochaine provisoire à remettre")
+        self.assertContains(response, "ATT-PROV-1")
+        self.assertContains(
+            response,
+            provisional.provisional_due_date.strftime("%d/%m/%Y"),
+        )
+        after_15 = self.client.get(reverse("call_checklist"), {"due_filter": "gt15"})
+        self.assertNotContains(after_15, "POL-PROV")
+
+        detail = self.client.get(
+            reverse("contract_detail", args=[provisional.pk]),
+        )
+        self.assertContains(detail, "ÉCHÉANCE PROVISOIRE")
+        self.assertContains(detail, "Fin du contrat")
+
+        choice_response = self.client.post(
+            reverse("contract_detail", args=[provisional.pk]),
+            {
+                "form_action": "provisional_plan",
+                "provisional_selected_count": "1",
+            },
+        )
+        self.assertRedirects(
+            choice_response,
+            reverse("contract_detail", args=[provisional.pk]),
+        )
+        provisional.refresh_from_db()
+        self.assertEqual(provisional.provisional_selected_count, 1)
+        self.assertEqual(provisional.provisional_target_count, 1)
+        self.assertEqual(
+            provisional.provisional_action_label,
+            "Attestation définitive à remettre",
+        )
+
+        updated_checklist = self.client.get(reverse("call_checklist"))
+        self.assertContains(updated_checklist, "Provisoire 1/1")
+        self.assertContains(updated_checklist, "Choix client : 1 sur 2 autorisées")
+        self.assertContains(
+            updated_checklist,
+            "Attestation définitive à remettre",
+        )
+
     def test_pagination_uses_arrow_buttons_and_keeps_checklist_filters(self):
         clients = [
             Client(
@@ -644,6 +857,7 @@ class ApplicationFlowTests(TestCase):
         self.assertEqual(import_page.status_code, 200)
         self.assertContains(import_page, "Importer le bordereau de production")
         self.assertContains(import_page, "Importer les échéances à venir")
+        self.assertContains(import_page, "Importer le suivi des provisoires")
 
         upload = excel_upload([
             ["POLICE", "CLIENT", "DATE_ECHEANCE", "PRIME_TOTAL", "NUM_QUITTANCE"],
@@ -669,13 +883,42 @@ class ExcelImportFlowTests(TestCase):
         self.admin = User.objects.create_user("exceladmin", password="secret", role=User.Role.ADMIN)
         self.client.login(username="exceladmin", password="secret")
 
-    def test_import_page_shows_two_separate_upload_areas(self):
+    def test_import_page_shows_three_separate_upload_areas(self):
         response = self.client.get(reverse("import_view"))
 
         self.assertContains(response, "Importer le bordereau de production")
         self.assertContains(response, "Importer les échéances à venir")
+        self.assertContains(response, "Importer le suivi des provisoires")
         self.assertContains(response, 'name="bordereau-file"')
         self.assertContains(response, 'name="upcoming-file"')
+        self.assertContains(response, 'name="provisional-file"')
+
+    def test_provisional_csv_is_imported_from_the_web_form(self):
+        upload = provisional_csv_upload([
+            [
+                "Police", "N° Attestation", "Date d'écheance",
+                "Provisoires délivrées", "Assuré", "N° Quittance",
+                "Immatriculation", "Date Effet", "Date fin/ Echéance",
+                "Etat Contrat",
+            ],
+            [
+                "WEB-PROV", "WEB-ATT-1", "31/01/2026", 1,
+                "Client provisoire web", "WEB-QP-1", "777-A-7",
+                "01/01/2026", "01/07/2026", "En cours",
+            ],
+        ])
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.PROVISIONAL,
+            "provisional-file": upload,
+        })
+
+        batch = ImportBatch.objects.get()
+        self.assertRedirects(response, reverse("import_report", args=[batch.pk]))
+        self.assertEqual(batch.import_type, ImportBatch.ImportType.PROVISIONAL)
+        contract = Contract.objects.get(policy_number="WEB-PROV")
+        self.assertTrue(contract.is_provisional)
+        self.assertEqual(contract.provisional_allowed_count, 2)
 
     def test_excel_is_imported_directly(self):
         upload = excel_upload([

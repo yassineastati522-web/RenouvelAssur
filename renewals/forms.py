@@ -16,6 +16,7 @@ class ImportForm(forms.Form):
 
     def __init__(self, *args, import_type=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.import_type = import_type
         if import_type == "upcoming":
             self.fields["file"].label = "Fichier des échéances à venir"
             self.fields["file"].help_text = (
@@ -28,14 +29,60 @@ class ImportForm(forms.Form):
                 "Fichier .xlsx ou .xls contenant POLICE, Nature Evenement, "
                 "PRIME_TOTAL et NUM_QUITTANCE."
             )
+        elif import_type == "provisional":
+            self.fields["file"].label = "Fichier de suivi des provisoires"
+            self.fields["file"].help_text = (
+                "Fichier .csv, .xlsx ou .xls contenant Police, "
+                "N° Attestation, Date d’écheance et Provisoires délivrées."
+            )
+            self.fields["file"].widget.attrs["accept"] = (
+                ".csv,.xlsx,.xls,text/csv,"
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+                "application/vnd.ms-excel"
+            )
 
     def clean_file(self):
         value = self.cleaned_data["file"]
-        if not value.name.lower().endswith((".xlsx", ".xls")):
-            raise forms.ValidationError("Le fichier doit être au format Excel (.xlsx ou .xls).")
+        allowed_extensions = (
+            (".csv", ".xlsx", ".xls")
+            if self.import_type == "provisional"
+            else (".xlsx", ".xls")
+        )
+        if not value.name.lower().endswith(allowed_extensions):
+            if self.import_type == "provisional":
+                raise forms.ValidationError(
+                    "Le suivi provisoire doit être au format .csv, .xlsx ou .xls."
+                )
+            raise forms.ValidationError(
+                "Le fichier doit être au format Excel (.xlsx ou .xls)."
+            )
         if value.size > 15 * 1024 * 1024:
             raise forms.ValidationError("Le fichier ne doit pas dépasser 15 Mo.")
         return value
+
+
+class ProvisionalPlanForm(forms.Form):
+    provisional_selected_count = forms.TypedChoiceField(
+        label="Nombre de provisoires choisi par le client",
+        coerce=int,
+        choices=(),
+    )
+
+    def __init__(self, *args, contract, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.contract = contract
+        minimum = max(contract.provisional_delivered_count, 1)
+        maximum = max(contract.provisional_allowed_count, minimum)
+        self.fields["provisional_selected_count"].choices = [
+            (
+                count,
+                f"{count} provisoire{'s' if count > 1 else ''}",
+            )
+            for count in range(minimum, maximum + 1)
+        ]
+        self.initial["provisional_selected_count"] = (
+            contract.provisional_target_count
+        )
 
 
 class ExpiredDateFilterForm(forms.Form):

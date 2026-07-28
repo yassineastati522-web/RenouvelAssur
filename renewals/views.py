@@ -3,12 +3,18 @@ from decimal import Decimal
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.db.models import Count, OuterRef, Q, Subquery, Sum
+from django.db.models import Case, Count, DateField, F, OuterRef, Q, Subquery, Sum, When
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
-from .forms import ClientForm, ExpiredDateFilterForm, ImportForm, InteractionForm
+from .forms import (
+    ClientForm,
+    ExpiredDateFilterForm,
+    ImportForm,
+    InteractionForm,
+    ProvisionalPlanForm,
+)
 from .models import CallInteraction, Client, Contract, ImportBatch, Termination
 from .services import import_contracts
 
@@ -123,8 +129,36 @@ def terminated_list(request):
 @login_required
 def contract_detail(request, pk):
     contract = get_object_or_404(scoped_contracts(request.user), pk=pk)
-    form = InteractionForm(request.POST or None, initial={"renewal_status": contract.renewal_status})
-    if request.method == "POST" and form.is_valid():
+    is_plan_post = (
+        request.method == "POST"
+        and request.POST.get("form_action") == "provisional_plan"
+    )
+    form = InteractionForm(
+        request.POST if request.method == "POST" and not is_plan_post else None,
+        initial={"renewal_status": contract.renewal_status},
+    )
+    provisional_plan_form = ProvisionalPlanForm(
+        request.POST if is_plan_post else None,
+        contract=contract,
+    )
+    if is_plan_post and not contract.is_provisional:
+        messages.error(request, "Ce contrat n’a pas de suivi provisoire actif.")
+        return redirect("contract_detail", pk=contract.pk)
+    if is_plan_post and provisional_plan_form.is_valid():
+        selected_count = provisional_plan_form.cleaned_data[
+            "provisional_selected_count"
+        ]
+        contract.provisional_selected_count = selected_count
+        contract.save(
+            update_fields=["provisional_selected_count", "updated_at"]
+        )
+        messages.success(
+            request,
+            f"Choix enregistré : {selected_count} provisoire"
+            f"{'s' if selected_count > 1 else ''} pour ce contrat.",
+        )
+        return redirect("contract_detail", pk=contract.pk)
+    if request.method == "POST" and not is_plan_post and form.is_valid():
         interaction = form.save(commit=False); interaction.contract = contract; interaction.employee = request.user; interaction.save()
         contract.renewal_status = interaction.renewal_status; contract.save(update_fields=["renewal_status", "updated_at"])
         messages.success(request, "Interaction enregistrée dans l’historique.")
@@ -133,7 +167,11 @@ def contract_detail(request, pk):
         if missed_days >= 3 and contract.renewal_status != Contract.RenewalStatus.UNREACHABLE:
             messages.warning(request, "Trois tentatives sans réponse sur des jours distincts : le statut « Injoignable » est suggéré.")
         return redirect("contract_detail", pk=contract.pk)
-    return render(request, "renewals/contract_detail.html", {"contract": contract, "form": form})
+    return render(request, "renewals/contract_detail.html", {
+        "contract": contract,
+        "form": form,
+        "provisional_plan_form": provisional_plan_form,
+    })
 
 
 @login_required
@@ -188,6 +226,15 @@ def call_checklist(request):
     contracts = exclude_terminated_contracts(
         allowed_contracts.exclude(renewal_status__in=closed_statuses)
     ).annotate(
+        action_date=Case(
+            When(
+                is_provisional=True,
+                provisional_due_date__isnull=False,
+                then=F("provisional_due_date"),
+            ),
+            default=F("end_date"),
+            output_field=DateField(),
+        ),
         last_call_result=Subquery(latest_call.values("call_result")[:1]),
         last_call_at=Subquery(latest_call.values("occurred_at")[:1]),
         call_attempts=Count(
@@ -195,7 +242,7 @@ def call_checklist(request):
             filter=Q(interactions__channel=CallInteraction.Channel.PHONE),
             distinct=True,
         ),
-    ).order_by("end_date", "client__name", "pk")
+    ).order_by("action_date", "client__name", "pk")
 
     query = request.GET.get("q", "").strip()
     if query:
@@ -203,19 +250,21 @@ def call_checklist(request):
             Q(client__name__icontains=query)
             | Q(client__phone__icontains=query)
             | Q(policy_number__icontains=query)
+            | Q(registration__icontains=query)
+            | Q(provisional_attestation__icontains=query)
         )
 
     due_filter = request.GET.get("due_filter", "all")
     today = timezone.localdate()
     if due_filter == "expired":
-        contracts = contracts.filter(end_date__lt=today)
+        contracts = contracts.filter(action_date__lt=today)
     elif due_filter == "gt7":
-        contracts = contracts.filter(end_date__gt=today + timedelta(days=7))
+        contracts = contracts.filter(action_date__gt=today + timedelta(days=7))
     elif due_filter == "gt15":
-        contracts = contracts.filter(end_date__gt=today + timedelta(days=15))
+        contracts = contracts.filter(action_date__gt=today + timedelta(days=15))
     else:
         due_filter = "all"
-        contracts = contracts.filter(end_date__gte=today)
+        contracts = contracts.filter(action_date__gte=today)
 
     total_count = contracts.count()
     pending_count = contracts.filter(last_call_at__isnull=True).count()
@@ -231,6 +280,7 @@ def call_checklist(request):
     result_labels = dict(QUICK_CALL_RESULTS)
     for contract in page:
         contract.last_call_label = result_labels.get(contract.last_call_result, "À appeler")
+        contract.display_days_remaining = (contract.action_date - today).days
 
     return render(request, "renewals/call_checklist.html", {
         "contracts": page,
@@ -269,6 +319,7 @@ def import_view(request):
     allowed_types = {
         ImportBatch.ImportType.UPCOMING,
         ImportBatch.ImportType.BORDEREAU,
+        ImportBatch.ImportType.PROVISIONAL,
     }
     requested_type = request.POST.get("import_kind") if request.method == "POST" else None
     upcoming_form = ImportForm(
@@ -283,16 +334,22 @@ def import_view(request):
         prefix="bordereau",
         import_type=ImportBatch.ImportType.BORDEREAU,
     )
+    provisional_form = ImportForm(
+        request.POST if requested_type == ImportBatch.ImportType.PROVISIONAL else None,
+        request.FILES if requested_type == ImportBatch.ImportType.PROVISIONAL else None,
+        prefix="provisional",
+        import_type=ImportBatch.ImportType.PROVISIONAL,
+    )
 
     if request.method == "POST":
         if requested_type not in allowed_types:
-            messages.error(request, "Choisissez l’un des deux types d’importation.")
+            messages.error(request, "Choisissez l’un des trois types d’importation.")
         else:
-            active_form = (
-                upcoming_form
-                if requested_type == ImportBatch.ImportType.UPCOMING
-                else bordereau_form
-            )
+            active_form = {
+                ImportBatch.ImportType.UPCOMING: upcoming_form,
+                ImportBatch.ImportType.BORDEREAU: bordereau_form,
+                ImportBatch.ImportType.PROVISIONAL: provisional_form,
+            }[requested_type]
             if active_form.is_valid():
                 upload = active_form.cleaned_data["file"]
                 try:
@@ -316,6 +373,7 @@ def import_view(request):
     return render(request, "renewals/import.html", {
         "upcoming_form": upcoming_form,
         "bordereau_form": bordereau_form,
+        "provisional_form": provisional_form,
         "imports": ImportBatch.objects.all().order_by("-imported_at")[:20],
     })
 
