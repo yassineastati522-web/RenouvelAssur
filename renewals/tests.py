@@ -587,7 +587,16 @@ class HighestPremiumDuplicateMigrationTests(TransactionTestCase):
             receipt="Q-OLD-HIST-1",
             registration="OLD-1",
             end_date=date(2025, 12, 31),
+            total_premium=Decimal("100.00"),
             renewed_contract_id=lower.pk,
+        )
+        ContractModel.objects.create(
+            client=client,
+            policy_number="OLD-HIST-1",
+            receipt="Q-OLD-HIST-1-DUPLICATE",
+            registration="OLD 1",
+            end_date=date(2025, 12, 31),
+            total_premium=Decimal("50.00"),
         )
         second_predecessor = ContractModel.objects.create(
             client=client,

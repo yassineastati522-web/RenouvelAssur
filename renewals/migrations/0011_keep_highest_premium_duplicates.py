@@ -91,6 +91,7 @@ def keep_highest_premium_duplicates(apps, schema_editor):
         "terminated": 9,
     }
 
+    deleted_contract_ids = set()
     for group in groups.values():
         if len(group) < 2:
             continue
@@ -112,16 +113,25 @@ def keep_highest_premium_duplicates(apps, schema_editor):
         duplicate_ids = [contract.pk for contract in duplicates]
         group_ids = {contract.pk for contract in group}
 
-        desired_renewed_contract_id = survivor.renewed_contract_id
+        current_renewed_links = dict(
+            Contract.objects.filter(pk__in=group_ids).values_list(
+                "pk",
+                "renewed_contract_id",
+            )
+        )
+        desired_renewed_contract_id = current_renewed_links.get(
+            survivor.pk,
+        )
         if desired_renewed_contract_id in group_ids:
             desired_renewed_contract_id = None
         if desired_renewed_contract_id is None:
             desired_renewed_contract_id = next(
                 (
-                    contract.renewed_contract_id
+                    current_renewed_links.get(contract.pk)
                     for contract in duplicates
-                    if contract.renewed_contract_id
-                    and contract.renewed_contract_id not in group_ids
+                    if current_renewed_links.get(contract.pk)
+                    and current_renewed_links.get(contract.pk)
+                    not in group_ids
                 ),
                 None,
             )
@@ -252,7 +262,13 @@ def keep_highest_premium_duplicates(apps, schema_editor):
                     duplicate_termination.contract_id = survivor.pk
                     duplicate_termination.save(update_fields=["contract"])
                     survivor_termination = duplicate_termination
+            deleted_contract_ids.add(duplicate.pk)
             duplicate.delete()
+
+    if deleted_contract_ids:
+        Contract.objects.filter(
+            renewed_contract_id__in=deleted_contract_ids,
+        ).update(renewed_contract_id=None)
 
 
 class Migration(migrations.Migration):
