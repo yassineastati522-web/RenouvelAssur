@@ -485,6 +485,53 @@ def contract_fingerprint(contract):
     )
 
 
+def contract_business_identity(
+    policy,
+    client_name,
+    registration,
+    effective_date,
+    end_date,
+    category="",
+):
+    vehicle = normalized_identity(registration)
+    if not vehicle:
+        return None
+    return (
+        canonical_policy(policy, category),
+        normalized_identity(client_name),
+        vehicle,
+        effective_date,
+        end_date,
+    )
+
+
+def item_business_identity(item):
+    values = item["values"]
+    return contract_business_identity(
+        item["policy"],
+        item["name"],
+        values["registration"],
+        values["effective_date"],
+        values["end_date"],
+        values["category"],
+    )
+
+
+def stored_contract_business_identity(contract):
+    return contract_business_identity(
+        contract.policy_number,
+        contract.client.name,
+        contract.registration,
+        contract.effective_date,
+        contract.end_date,
+        contract.category,
+    )
+
+
+def premium_rank(value):
+    return value if value is not None else Decimal("-Infinity")
+
+
 def indicates_renewed(value):
     flag = normalize(value)
     if not flag or flag.startswith("non ") or flag in {"non", "no", "0", "false"}:
@@ -746,6 +793,41 @@ def import_contract_rows(rows, filename, user):
     if not parsed:
         return save_batch(batch)
 
+    retained_by_premium = []
+    business_groups = {}
+    for item in parsed:
+        identity = item_business_identity(item)
+        if identity is None:
+            retained_by_premium.append(item)
+        else:
+            business_groups.setdefault(identity, []).append(item)
+
+    for group in business_groups.values():
+        highest_premium = max(
+            premium_rank(item["values"]["total_premium"])
+            for item in group
+        )
+        highest_items = [
+            item
+            for item in group
+            if premium_rank(item["values"]["total_premium"])
+            == highest_premium
+        ]
+        winner_line = min(item["line"] for item in highest_items)
+        retained_by_premium.extend(highest_items)
+        for item in group:
+            if item in highest_items:
+                continue
+            record_error(
+                batch,
+                item["line"],
+                ValueError(
+                    "doublon ignoré : prime TTC inférieure à celle de "
+                    f"la ligne {winner_line}"
+                ),
+            )
+
+    parsed = sorted(retained_by_premium, key=lambda item: item["line"])
     unique_parsed = []
     seen_fingerprints = {}
     seen_keys = {}
@@ -793,6 +875,10 @@ def import_contract_rows(rows, filename, user):
                 (contract.policy_number, contract.receipt): contract
                 for contract in existing_contract_list
             }
+            existing_contracts_by_id = {
+                contract.pk: contract
+                for contract in existing_contract_list
+            }
             contracts_by_policy = {}
             clients_by_policy = {}
             for contract in existing_contract_list:
@@ -805,13 +891,52 @@ def import_contract_rows(rows, filename, user):
                     clients_by_policy.setdefault(policy, contract.client)
 
             existing_fingerprints = {}
+            existing_business_contracts = {}
             for contract in existing_contract_list:
                 existing_fingerprints.setdefault(contract_fingerprint(contract), contract)
+                identity = stored_contract_business_identity(contract)
+                if identity is None:
+                    continue
+                current = existing_business_contracts.get(identity)
+                if (
+                    current is None
+                    or premium_rank(contract.total_premium)
+                    > premium_rank(current.total_premium)
+                ):
+                    existing_business_contracts[identity] = contract
 
             filtered_parsed = []
             for item in parsed:
                 duplicate_contract = existing_fingerprints.get(item_fingerprint(item))
                 exact_contract = existing_contracts.get(item["key"])
+                business_contract = existing_business_contracts.get(
+                    item_business_identity(item)
+                )
+                if business_contract is not None:
+                    incoming_premium = premium_rank(
+                        item["values"]["total_premium"]
+                    )
+                    stored_premium = premium_rank(
+                        business_contract.total_premium
+                    )
+                    if incoming_premium < stored_premium:
+                        record_error(
+                            batch,
+                            item["line"],
+                            ValueError(
+                                "doublon ignoré : la base contient déjà "
+                                "ce contrat avec une prime TTC supérieure"
+                            ),
+                        )
+                        continue
+                    if incoming_premium > stored_premium:
+                        item["matched_contract_id"] = business_contract.pk
+                        filtered_parsed.append(item)
+                        continue
+                    if exact_contract is not None:
+                        item["matched_contract_id"] = business_contract.pk
+                        filtered_parsed.append(item)
+                        continue
                 is_legacy_match = (
                     duplicate_contract is not None
                     and duplicate_contract.policy_number != item["policy"]
@@ -824,6 +949,12 @@ def import_contract_rows(rows, filename, user):
                     )
                     and duplicate_contract.receipt == item["receipt"]
                 )
+                if (
+                    business_contract is not None
+                    and exact_contract is None
+                    and not is_legacy_match
+                ):
+                    duplicate_contract = business_contract
                 if duplicate_contract is not None and exact_contract is None and not is_legacy_match:
                     record_error(
                         batch,
@@ -911,7 +1042,9 @@ def import_contract_rows(rows, filename, user):
                     if item["external_id"]
                     else ("name", item["name"].lower())
                 )
-                contract = existing_contracts.get(key)
+                contract = existing_contracts_by_id.get(
+                    item.get("matched_contract_id")
+                ) or existing_contracts.get(key)
                 if contract is None:
                     contract = select_contract_candidate(
                         item,

@@ -1,12 +1,14 @@
 import os
 from datetime import date, timedelta
+from decimal import Decimal
 from io import BytesIO
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.db import connection
-from django.test import SimpleTestCase, TestCase
+from django.db.migrations.executor import MigrationExecutor
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -123,6 +125,75 @@ class ImportServiceTests(TestCase):
         self.assertEqual((batch.added_rows, batch.updated_rows, batch.rejected_rows), (0, 0, 1))
         self.assertEqual(Contract.objects.count(), 1)
         self.assertEqual(Contract.objects.get().receipt, "Q-01")
+
+    def test_same_contract_with_different_premiums_keeps_the_highest_row(self):
+        rows = [
+            [
+                "Police", "Assuré", "Immatriculation", "Prime TTC",
+                "Quittance", "Date Effet", "Date Fin",
+            ],
+            [
+                "8/0172880845", "AAZIZA YOUSSEF", "28831-A-48",
+                "525,95", "Q-LOW-1", "08/11/2025", "08/11/2026",
+            ],
+            [
+                "8/0172880845", "AAZIZA YOUSSEF", "28831 A 48",
+                "525,93", "Q-LOW-2", "08/11/2025", "08/11/2026",
+            ],
+            [
+                "8/0172880845", "AAZIZA YOUSSEF", "28831-A-48",
+                "541,36", "Q-HIGH", "08/11/2025", "08/11/2026",
+            ],
+        ]
+
+        batch = import_contracts(excel_upload(rows), self.admin)
+
+        self.assertEqual(
+            (batch.added_rows, batch.updated_rows, batch.rejected_rows),
+            (1, 0, 2),
+        )
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.receipt, "Q-HIGH")
+        self.assertEqual(str(contract.total_premium), "541.36")
+        self.assertTrue(
+            all("prime TTC inférieure" in error["error"] for error in batch.errors)
+        )
+
+    def test_lower_premium_cannot_replace_higher_existing_contract(self):
+        higher = excel_upload([
+            [
+                "Police", "Assuré", "Immatriculation", "Prime TTC",
+                "Quittance", "Date Effet", "Date Fin",
+            ],
+            [
+                "P-HIGHEST", "Client Prime", "999-A-9", "900",
+                "Q-HIGH", "01/01/2026", "31/12/2026",
+            ],
+        ])
+        lower = excel_upload([
+            [
+                "Police", "Assuré", "Immatriculation", "Prime TTC",
+                "Quittance", "Date Effet", "Date Fin",
+            ],
+            [
+                "P-HIGHEST", "Client Prime", "999 A 9", "700",
+                "Q-LOW", "01/01/2026", "31/12/2026",
+            ],
+        ])
+        import_contracts(higher, self.admin)
+
+        batch = import_contracts(lower, self.admin)
+
+        self.assertEqual(
+            (batch.added_rows, batch.updated_rows, batch.rejected_rows),
+            (0, 0, 1),
+        )
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.receipt, "Q-HIGH")
+        self.assertEqual(str(contract.total_premium), "900.00")
+        self.assertIn("prime TTC supérieure", batch.errors[0]["error"])
 
     def test_bad_date_is_reported(self):
         upload = excel_upload([
@@ -462,6 +533,64 @@ class ImportServiceTests(TestCase):
         self.assertLess(len(queries), 30)
 
 
+class HighestPremiumDuplicateMigrationTests(TransactionTestCase):
+    migrate_from = ("renewals", "0010_link_vehicle_renewals")
+    migrate_to = ("renewals", "0011_keep_highest_premium_duplicates")
+
+    def test_migration_keeps_highest_premium_and_moves_call_history(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        ClientModel = old_apps.get_model("renewals", "Client")
+        ContractModel = old_apps.get_model("renewals", "Contract")
+        CallInteractionModel = old_apps.get_model(
+            "renewals",
+            "CallInteraction",
+        )
+
+        client = ClientModel.objects.create(name="Client historique")
+        lower = ContractModel.objects.create(
+            client=client,
+            policy_number="8/HIST-001",
+            receipt="Q-HIST-LOW",
+            registration="12345-A-6",
+            effective_date=date(2026, 1, 1),
+            end_date=date(2026, 12, 31),
+            total_premium=Decimal("500.00"),
+        )
+        higher = ContractModel.objects.create(
+            client=client,
+            policy_number="8/HIST-001",
+            receipt="Q-HIST-HIGH",
+            registration="12345 A 6",
+            effective_date=date(2026, 1, 1),
+            end_date=date(2026, 12, 31),
+            total_premium=Decimal("750.00"),
+        )
+        interaction = CallInteractionModel.objects.create(
+            contract=lower,
+            call_result="answered",
+            renewal_status="to_contact",
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        ContractModel = new_apps.get_model("renewals", "Contract")
+        CallInteractionModel = new_apps.get_model(
+            "renewals",
+            "CallInteraction",
+        )
+
+        self.assertEqual(ContractModel.objects.count(), 1)
+        survivor = ContractModel.objects.get()
+        self.assertEqual(survivor.pk, higher.pk)
+        self.assertEqual(survivor.receipt, "Q-HIST-HIGH")
+        self.assertEqual(survivor.total_premium, Decimal("750.00"))
+        interaction = CallInteractionModel.objects.get(pk=interaction.pk)
+        self.assertEqual(interaction.contract_id, survivor.pk)
+
+
 class ApplicationFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("agent", password="secret", role=User.Role.AGENT)
@@ -486,6 +615,40 @@ class ApplicationFlowTests(TestCase):
         detail = self.client.get(reverse("contract_detail", args=[self.contract.pk]))
         self.assertContains(detail, "Marque")
         self.assertContains(detail, "DACIA")
+
+    def test_client_list_counts_only_distinct_accessible_contracts(self):
+        Contract.objects.create(
+            client=self.client_obj,
+            assigned_agent=self.user,
+            policy_number="P-2",
+            receipt="Q-2",
+            end_date=timezone.localdate() + timedelta(days=20),
+        )
+        other_agent = User.objects.create_user(
+            "other-client-agent",
+            password="secret",
+            role=User.Role.AGENT,
+        )
+        Contract.objects.bulk_create([
+            Contract(
+                client=self.client_obj,
+                assigned_agent=other_agent,
+                policy_number=f"HIDDEN-{index}",
+                receipt=f"Q-HIDDEN-{index}",
+                end_date=timezone.localdate() + timedelta(days=30 + index),
+            )
+            for index in range(6)
+        ])
+
+        response = self.client.get(reverse("client_list"))
+
+        self.assertEqual(response.status_code, 200)
+        visible_client = next(
+            client
+            for client in response.context["clients"]
+            if client.pk == self.client_obj.pk
+        )
+        self.assertEqual(visible_client.contract_count, 2)
 
     def test_renewal_list_uses_relative_periods_and_two_statuses(self):
         past_client = Client.objects.create(
