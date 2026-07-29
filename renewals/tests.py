@@ -572,6 +572,40 @@ class HighestPremiumDuplicateMigrationTests(TransactionTestCase):
             call_result="answered",
             renewal_status="to_contact",
         )
+        middle = ContractModel.objects.create(
+            client=client,
+            policy_number="8/HIST-001",
+            receipt="Q-HIST-MIDDLE",
+            registration="12345/A/6",
+            effective_date=date(2026, 1, 1),
+            end_date=date(2026, 12, 31),
+            total_premium=Decimal("600.00"),
+        )
+        first_predecessor = ContractModel.objects.create(
+            client=client,
+            policy_number="OLD-HIST-1",
+            receipt="Q-OLD-HIST-1",
+            registration="OLD-1",
+            end_date=date(2025, 12, 31),
+            total_premium=Decimal("100.00"),
+            renewed_contract_id=lower.pk,
+        )
+        ContractModel.objects.create(
+            client=client,
+            policy_number="OLD-HIST-1",
+            receipt="Q-OLD-HIST-1-DUPLICATE",
+            registration="OLD 1",
+            end_date=date(2025, 12, 31),
+            total_premium=Decimal("50.00"),
+        )
+        second_predecessor = ContractModel.objects.create(
+            client=client,
+            policy_number="OLD-HIST-2",
+            receipt="Q-OLD-HIST-2",
+            registration="OLD-2",
+            end_date=date(2025, 12, 31),
+            renewed_contract_id=middle.pk,
+        )
 
         executor = MigrationExecutor(connection)
         executor.migrate([self.migrate_to])
@@ -582,13 +616,24 @@ class HighestPremiumDuplicateMigrationTests(TransactionTestCase):
             "CallInteraction",
         )
 
-        self.assertEqual(ContractModel.objects.count(), 1)
-        survivor = ContractModel.objects.get()
+        self.assertEqual(ContractModel.objects.count(), 3)
+        survivor = ContractModel.objects.get(policy_number="8/HIST-001")
         self.assertEqual(survivor.pk, higher.pk)
         self.assertEqual(survivor.receipt, "Q-HIST-HIGH")
         self.assertEqual(survivor.total_premium, Decimal("750.00"))
         interaction = CallInteractionModel.objects.get(pk=interaction.pk)
         self.assertEqual(interaction.contract_id, survivor.pk)
+        first_predecessor = ContractModel.objects.get(
+            pk=first_predecessor.pk,
+        )
+        second_predecessor = ContractModel.objects.get(
+            pk=second_predecessor.pk,
+        )
+        predecessor_links = {
+            first_predecessor.renewed_contract_id,
+            second_predecessor.renewed_contract_id,
+        }
+        self.assertEqual(predecessor_links, {None, survivor.pk})
 
 
 class ApplicationFlowTests(TestCase):
