@@ -318,8 +318,22 @@ def call_checklist(request):
 
 @login_required
 def client_list(request):
-    qs = Client.objects.annotate(contract_count=Count("contracts")).order_by("name", "pk")
-    if not request.user.is_agency_admin: qs = qs.filter(contracts__in=scoped_contracts(request.user)).distinct()
+    if request.user.is_agency_admin:
+        qs = Client.objects.annotate(
+            contract_count=Count("contracts", distinct=True),
+        )
+    else:
+        accessible_contract_ids = (
+            scoped_contracts(request.user).order_by().values("pk")
+        )
+        qs = Client.objects.annotate(
+            contract_count=Count(
+                "contracts",
+                filter=Q(contracts__in=accessible_contract_ids),
+                distinct=True,
+            ),
+        ).filter(contract_count__gt=0)
+    qs = qs.order_by("name", "pk")
     query = request.GET.get("q", "").strip()
     if query: qs = qs.filter(Q(name__icontains=query) | Q(phone__icontains=query) | Q(external_id__icontains=query))
     return render(request, "renewals/client_list.html", {"clients": paginate(request, qs)})
