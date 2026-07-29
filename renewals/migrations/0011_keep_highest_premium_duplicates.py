@@ -191,6 +191,14 @@ def keep_highest_premium_duplicates(apps, schema_editor):
             predecessor = external_predecessors[0]
             predecessor.renewed_contract_id = survivor.pk
             predecessor.save(update_fields=["renewed_contract"])
+            external_predecessors = external_predecessors[1:]
+        if external_predecessors:
+            Contract.objects.filter(
+                pk__in=[
+                    predecessor.pk
+                    for predecessor in external_predecessors
+                ],
+            ).update(renewed_contract_id=None)
 
         survivor_renewal = Renewal.objects.filter(
             old_contract_id=survivor.pk,
