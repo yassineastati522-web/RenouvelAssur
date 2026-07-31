@@ -97,7 +97,7 @@
             <span class="attempt-count"><b>{{ contract.call_attempts }}</b><small>tentative{{ contract.call_attempts|pluralize }}</small></span>
           </td>
           <td data-label="Nouvel appel">
-            <form method="post" class="quick-call-form">
+            <form method="post" action="{{ request.get_full_path }}" class="quick-call-form">
               {% csrf_token %}
               <input type="hidden" name="contract" value="{{ contract.pk }}">
               <select name="call_result" required aria-label="Résultat de l’appel pour {{ contract.client.name }}">
