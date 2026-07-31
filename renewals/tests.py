@@ -959,6 +959,22 @@ class ApplicationFlowTests(TestCase):
         pending = self.client.get(reverse("call_checklist"), {"call_status": "pending"})
         self.assertNotContains(pending, self.contract.policy_number)
 
+    def test_call_checklist_keeps_filters_and_page_after_recording_call(self):
+        checklist_url = reverse("call_checklist")
+        filtered_url = (
+            f"{checklist_url}?due_date={self.contract.end_date.isoformat()}"
+            "&call_status=unavailable&due_filter=gt7&page=2"
+        )
+
+        response = self.client.post(filtered_url, {
+            "contract": self.contract.pk,
+            "call_result": "voicemail",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], filtered_url)
+        self.assertEqual(CallInteraction.objects.count(), 1)
+
     def test_call_checklist_respects_the_agent_scope(self):
         other_agent = User.objects.create_user("other-agent", password="secret", role=User.Role.AGENT)
         other_client = Client.objects.create(name="Client hors portefeuille", phone="0612345678")

@@ -234,7 +234,7 @@ def call_checklist(request):
                 comment=request.POST.get("comment", "").strip(),
             )
             messages.success(request, f"Appel de {contract.client.name} enregistré dans la checklist.")
-        return redirect("call_checklist")
+        return redirect(request.get_full_path())
 
     latest_call = CallInteraction.objects.filter(
         contract=OuterRef("pk"),
