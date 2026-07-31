@@ -1134,25 +1134,27 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(after_15, "POL-10")
         self.assertContains(after_15, "POL-20")
 
-        exact_date = self.client.get(reverse("call_checklist"), {
+        from_date = self.client.get(reverse("call_checklist"), {
             "due_date": (timezone.localdate() + timedelta(days=10)).isoformat(),
         })
-        self.assertNotContains(exact_date, "POL-05")
-        self.assertContains(exact_date, "POL-10")
-        self.assertNotContains(exact_date, "POL-20")
-        self.assertNotContains(exact_date, "POL-PAST")
-        self.assertNotContains(exact_date, 'name="q"')
-        self.assertContains(exact_date, 'name="due_date"')
-        self.assertNotContains(exact_date, 'name="date_from"')
-        self.assertNotContains(exact_date, 'name="date_to"')
+        self.assertNotContains(from_date, "POL-05")
+        self.assertContains(from_date, "POL-10")
+        self.assertContains(from_date, "POL-20")
+        self.assertNotContains(from_date, "POL-PAST")
+        self.assertContains(from_date, "Échéances à partir du")
+        self.assertNotContains(from_date, 'name="q"')
+        self.assertContains(from_date, 'name="due_date"')
+        self.assertNotContains(from_date, 'name="date_from"')
+        self.assertNotContains(from_date, 'name="date_to"')
 
-        exact_expired_date = self.client.get(reverse("call_checklist"), {
+        from_expired_date = self.client.get(reverse("call_checklist"), {
             "due_date": (
                 timezone.localdate() - timedelta(days=2)
             ).isoformat(),
         })
-        self.assertContains(exact_expired_date, "POL-PAST")
-        self.assertNotContains(exact_expired_date, "POL-05")
+        self.assertContains(from_expired_date, "POL-PAST")
+        self.assertContains(from_expired_date, "POL-05")
+        self.assertContains(from_expired_date, "POL-20")
 
     def test_call_checklist_uses_and_explains_the_provisional_due_date(self):
         provisional_client = Client.objects.create(
