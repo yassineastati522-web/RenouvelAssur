@@ -1118,16 +1118,25 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(after_15, "POL-10")
         self.assertContains(after_15, "POL-20")
 
-        date_range = self.client.get(reverse("call_checklist"), {
-            "date_from": (timezone.localdate() + timedelta(days=8)).isoformat(),
-            "date_to": (timezone.localdate() + timedelta(days=12)).isoformat(),
+        exact_date = self.client.get(reverse("call_checklist"), {
+            "due_date": (timezone.localdate() + timedelta(days=10)).isoformat(),
         })
-        self.assertNotContains(date_range, "POL-05")
-        self.assertContains(date_range, "POL-10")
-        self.assertNotContains(date_range, "POL-20")
-        self.assertNotContains(date_range, 'name="q"')
-        self.assertContains(date_range, 'name="date_from"')
-        self.assertContains(date_range, 'name="date_to"')
+        self.assertNotContains(exact_date, "POL-05")
+        self.assertContains(exact_date, "POL-10")
+        self.assertNotContains(exact_date, "POL-20")
+        self.assertNotContains(exact_date, "POL-PAST")
+        self.assertNotContains(exact_date, 'name="q"')
+        self.assertContains(exact_date, 'name="due_date"')
+        self.assertNotContains(exact_date, 'name="date_from"')
+        self.assertNotContains(exact_date, 'name="date_to"')
+
+        exact_expired_date = self.client.get(reverse("call_checklist"), {
+            "due_date": (
+                timezone.localdate() - timedelta(days=2)
+            ).isoformat(),
+        })
+        self.assertContains(exact_expired_date, "POL-PAST")
+        self.assertNotContains(exact_expired_date, "POL-05")
 
     def test_call_checklist_uses_and_explains_the_provisional_due_date(self):
         provisional_client = Client.objects.create(
@@ -1211,7 +1220,7 @@ class ApplicationFlowTests(TestCase):
                 assigned_agent=self.user,
                 policy_number=f"PAGE-{index:02d}",
                 receipt=f"QP-{index:02d}",
-                end_date=timezone.localdate() + timedelta(days=index + 10),
+                end_date=timezone.localdate() + timedelta(days=20),
             )
             for index, client in enumerate(clients)
         ])
@@ -1219,22 +1228,19 @@ class ApplicationFlowTests(TestCase):
         first_page = self.client.get(reverse("call_checklist"), {
             "call_status": "pending",
             "due_filter": "gt7",
-            "date_from": (timezone.localdate() + timedelta(days=1)).isoformat(),
-            "date_to": (timezone.localdate() + timedelta(days=100)).isoformat(),
+            "due_date": (timezone.localdate() + timedelta(days=20)).isoformat(),
         })
 
         self.assertContains(first_page, 'aria-label="Page suivante"')
         self.assertContains(first_page, "call_status=pending")
         self.assertContains(first_page, "due_filter=gt7")
-        self.assertContains(first_page, "date_from=")
-        self.assertContains(first_page, "date_to=")
+        self.assertContains(first_page, "due_date=")
         self.assertNotContains(first_page, "Suivant →")
         second_page = self.client.get(reverse("call_checklist"), {
             "page": 2,
             "call_status": "pending",
             "due_filter": "gt7",
-            "date_from": (timezone.localdate() + timedelta(days=1)).isoformat(),
-            "date_to": (timezone.localdate() + timedelta(days=100)).isoformat(),
+            "due_date": (timezone.localdate() + timedelta(days=20)).isoformat(),
         })
         self.assertContains(second_page, 'aria-label="Page précédente"')
         self.assertContains(second_page, "2 / 2")

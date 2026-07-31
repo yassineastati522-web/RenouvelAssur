@@ -17,12 +17,8 @@
 
 <form method="get" class="call-filters">
   <label>
-    <span>{{ date_filter_form.date_from.label }}</span>
-    {{ date_filter_form.date_from }}
-  </label>
-  <label>
-    <span>{{ date_filter_form.date_to.label }}</span>
-    {{ date_filter_form.date_to }}
+    <span>{{ date_filter_form.due_date.label }}</span>
+    {{ date_filter_form.due_date }}
   </label>
   <select name="call_status">
     <option value="all" {% if call_status == 'all' %}selected{% endif %}>Tous les clients</option>
@@ -38,8 +34,8 @@
   </select>
   <button class="btn dark">Filtrer</button>
   <a class="btn" href="{% url 'call_checklist' %}">Réinitialiser</a>
-  {% if date_filter_form.non_field_errors %}
-    <div class="call-filter-errors">{{ date_filter_form.non_field_errors }}</div>
+  {% if date_filter_form.due_date.errors %}
+    <div class="call-filter-errors">{{ date_filter_form.due_date.errors }}</div>
   {% endif %}
 </form>
 

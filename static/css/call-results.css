@@ -80,7 +80,7 @@
 
 .call-filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(150px, 190px)) minmax(155px, 180px) minmax(175px, 205px) auto auto;
+  grid-template-columns: minmax(180px, 230px) minmax(155px, 180px) minmax(175px, 205px) auto auto;
   align-items: end;
   gap: 10px;
   margin-bottom: 18px;
