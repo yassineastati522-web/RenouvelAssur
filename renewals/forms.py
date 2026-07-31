@@ -108,6 +108,14 @@ class ExpiredDateFilterForm(forms.Form):
         return cleaned
 
 
+class ChecklistDateFilterForm(forms.Form):
+    due_date = forms.DateField(
+        label="Date d’échéance",
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+
+
 class InteractionForm(forms.ModelForm):
     next_follow_up = forms.DateTimeField(
         label="Prochaine relance",

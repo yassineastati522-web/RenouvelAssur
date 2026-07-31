@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from .forms import (
+    ChecklistDateFilterForm,
     ClientForm,
     ExpiredDateFilterForm,
     ImportForm,
@@ -266,9 +267,16 @@ def call_checklist(request):
         ),
     ).order_by("action_date", "client__name", "pk")
 
-    due_filter = request.GET.get("due_filter", "all")
     today = timezone.localdate()
-    if due_filter == "expired":
+    date_filter_form = ChecklistDateFilterForm(request.GET or None)
+    selected_due_date = None
+    if date_filter_form.is_valid():
+        selected_due_date = date_filter_form.cleaned_data.get("due_date")
+
+    due_filter = request.GET.get("due_filter", "all")
+    if selected_due_date:
+        contracts = contracts.filter(action_date=selected_due_date)
+    elif due_filter == "expired":
         contracts = contracts.filter(action_date__lt=today)
     elif due_filter == "gt7":
         contracts = contracts.filter(action_date__gt=today + timedelta(days=7))
@@ -277,15 +285,6 @@ def call_checklist(request):
     else:
         due_filter = "all"
         contracts = contracts.filter(action_date__gte=today)
-
-    date_filter_form = ExpiredDateFilterForm(request.GET or None)
-    if date_filter_form.is_valid():
-        date_from = date_filter_form.cleaned_data.get("date_from")
-        date_to = date_filter_form.cleaned_data.get("date_to")
-        if date_from:
-            contracts = contracts.filter(action_date__gte=date_from)
-        if date_to:
-            contracts = contracts.filter(action_date__lte=date_to)
 
     total_count = contracts.count()
     pending_count = contracts.filter(last_call_at__isnull=True).count()
