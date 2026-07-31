@@ -10,16 +10,25 @@
   <div class="call-summary">
     <div><strong>{{ pending_count }}</strong><span>À appeler</span></div>
     <div><strong>{{ completed_count }}</strong><span>Traités</span></div>
+    <div><strong>{{ unavailable_count }}</strong><span>Indisponibles</span></div>
     <div><strong>{{ total_count }}</strong><span>Total</span></div>
   </div>
 </div>
 
 <form method="get" class="call-filters">
-  <input type="search" name="q" value="{{ query }}" placeholder="Client, téléphone, police, immatriculation ou attestation…">
+  <label>
+    <span>{{ date_filter_form.date_from.label }}</span>
+    {{ date_filter_form.date_from }}
+  </label>
+  <label>
+    <span>{{ date_filter_form.date_to.label }}</span>
+    {{ date_filter_form.date_to }}
+  </label>
   <select name="call_status">
     <option value="all" {% if call_status == 'all' %}selected{% endif %}>Tous les clients</option>
     <option value="pending" {% if call_status == 'pending' %}selected{% endif %}>À appeler</option>
     <option value="completed" {% if call_status == 'completed' %}selected{% endif %}>Déjà traités</option>
+    <option value="unavailable" {% if call_status == 'unavailable' %}selected{% endif %}>Indisponibles</option>
   </select>
   <select name="due_filter" aria-label="Filtrer par date d’échéance">
     <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Actions à venir</option>
@@ -28,6 +37,10 @@
     <option value="gt15" {% if due_filter == 'gt15' %}selected{% endif %}>Action &gt; 15 jours</option>
   </select>
   <button class="btn dark">Filtrer</button>
+  <a class="btn" href="{% url 'call_checklist' %}">Réinitialiser</a>
+  {% if date_filter_form.non_field_errors %}
+    <div class="call-filter-errors">{{ date_filter_form.non_field_errors }}</div>
+  {% endif %}
 </form>
 
 <section class="panel table-panel call-panel">
