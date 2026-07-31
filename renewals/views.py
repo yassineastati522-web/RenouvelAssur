@@ -266,16 +266,6 @@ def call_checklist(request):
         ),
     ).order_by("action_date", "client__name", "pk")
 
-    query = request.GET.get("q", "").strip()
-    if query:
-        contracts = contracts.filter(
-            Q(client__name__icontains=query)
-            | Q(client__phone__icontains=query)
-            | Q(policy_number__icontains=query)
-            | Q(registration__icontains=query)
-            | Q(provisional_attestation__icontains=query)
-        )
-
     due_filter = request.GET.get("due_filter", "all")
     today = timezone.localdate()
     if due_filter == "expired":
@@ -288,13 +278,36 @@ def call_checklist(request):
         due_filter = "all"
         contracts = contracts.filter(action_date__gte=today)
 
+    date_filter_form = ExpiredDateFilterForm(request.GET or None)
+    if date_filter_form.is_valid():
+        date_from = date_filter_form.cleaned_data.get("date_from")
+        date_to = date_filter_form.cleaned_data.get("date_to")
+        if date_from:
+            contracts = contracts.filter(action_date__gte=date_from)
+        if date_to:
+            contracts = contracts.filter(action_date__lte=date_to)
+
     total_count = contracts.count()
     pending_count = contracts.filter(last_call_at__isnull=True).count()
+    unavailable_results = [
+        CallInteraction.Result.VOICEMAIL,
+        CallInteraction.Result.UNREACHABLE,
+    ]
+    unavailable_count = contracts.filter(
+        last_call_result__in=unavailable_results,
+    ).count()
+    completed_count = contracts.filter(
+        last_call_at__isnull=False,
+    ).exclude(last_call_result__in=unavailable_results).count()
     call_status = request.GET.get("call_status", "all")
     if call_status == "pending":
         contracts = contracts.filter(last_call_at__isnull=True)
     elif call_status == "completed":
-        contracts = contracts.filter(last_call_at__isnull=False)
+        contracts = contracts.filter(
+            last_call_at__isnull=False,
+        ).exclude(last_call_result__in=unavailable_results)
+    elif call_status == "unavailable":
+        contracts = contracts.filter(last_call_result__in=unavailable_results)
     else:
         call_status = "all"
 
@@ -309,10 +322,11 @@ def call_checklist(request):
         "call_results": QUICK_CALL_RESULTS,
         "call_status": call_status,
         "due_filter": due_filter,
-        "query": query,
+        "date_filter_form": date_filter_form,
         "total_count": total_count,
         "pending_count": pending_count,
-        "completed_count": total_count - pending_count,
+        "completed_count": completed_count,
+        "unavailable_count": unavailable_count,
     })
 
 

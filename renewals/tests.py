@@ -986,6 +986,85 @@ class ApplicationFlowTests(TestCase):
         self.assertRedirects(response, reverse("call_checklist"))
         self.assertFalse(CallInteraction.objects.exists())
 
+    def test_call_checklist_filters_unavailable_by_latest_phone_result(self):
+        voicemail_client = Client.objects.create(
+            name="Client boîte vocale",
+            phone="0611111111",
+        )
+        voicemail_contract = Contract.objects.create(
+            client=voicemail_client,
+            assigned_agent=self.user,
+            policy_number="POL-VOICEMAIL",
+            receipt="Q-VOICEMAIL",
+            end_date=timezone.localdate() + timedelta(days=6),
+        )
+        CallInteraction.objects.create(
+            contract=voicemail_contract,
+            employee=self.user,
+            call_result=CallInteraction.Result.VOICEMAIL,
+            renewal_status=voicemail_contract.renewal_status,
+        )
+
+        unreachable_client = Client.objects.create(
+            name="Client non joignable",
+            phone="0622222222",
+        )
+        unreachable_contract = Contract.objects.create(
+            client=unreachable_client,
+            assigned_agent=self.user,
+            policy_number="POL-UNREACHABLE",
+            receipt="Q-UNREACHABLE",
+            end_date=timezone.localdate() + timedelta(days=7),
+        )
+        CallInteraction.objects.create(
+            contract=unreachable_contract,
+            employee=self.user,
+            call_result=CallInteraction.Result.UNREACHABLE,
+            renewal_status=unreachable_contract.renewal_status,
+        )
+
+        answered_client = Client.objects.create(
+            name="Client finalement joint",
+            phone="0633333333",
+        )
+        answered_contract = Contract.objects.create(
+            client=answered_client,
+            assigned_agent=self.user,
+            policy_number="POL-ANSWERED",
+            receipt="Q-ANSWERED",
+            end_date=timezone.localdate() + timedelta(days=8),
+        )
+        CallInteraction.objects.create(
+            contract=answered_contract,
+            employee=self.user,
+            call_result=CallInteraction.Result.VOICEMAIL,
+            renewal_status=answered_contract.renewal_status,
+            occurred_at=timezone.now() - timedelta(minutes=5),
+        )
+        CallInteraction.objects.create(
+            contract=answered_contract,
+            employee=self.user,
+            call_result=CallInteraction.Result.ANSWERED,
+            renewal_status=answered_contract.renewal_status,
+        )
+
+        response = self.client.get(reverse("call_checklist"), {
+            "call_status": "unavailable",
+        })
+
+        self.assertContains(response, "Indisponibles")
+        self.assertContains(response, voicemail_contract.policy_number)
+        self.assertContains(response, unreachable_contract.policy_number)
+        self.assertNotContains(response, answered_contract.policy_number)
+        self.assertNotContains(response, self.contract.policy_number)
+
+        completed = self.client.get(reverse("call_checklist"), {
+            "call_status": "completed",
+        })
+        self.assertContains(completed, answered_contract.policy_number)
+        self.assertNotContains(completed, voicemail_contract.policy_number)
+        self.assertNotContains(completed, unreachable_contract.policy_number)
+
     def test_call_checklist_filters_due_dates_and_keeps_ascending_order(self):
         self.client_obj.name = "Échéance cinq jours"
         self.client_obj.save(update_fields=["name", "updated_at"])
@@ -1038,6 +1117,17 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(after_15, "POL-05")
         self.assertNotContains(after_15, "POL-10")
         self.assertContains(after_15, "POL-20")
+
+        date_range = self.client.get(reverse("call_checklist"), {
+            "date_from": (timezone.localdate() + timedelta(days=8)).isoformat(),
+            "date_to": (timezone.localdate() + timedelta(days=12)).isoformat(),
+        })
+        self.assertNotContains(date_range, "POL-05")
+        self.assertContains(date_range, "POL-10")
+        self.assertNotContains(date_range, "POL-20")
+        self.assertNotContains(date_range, 'name="q"')
+        self.assertContains(date_range, 'name="date_from"')
+        self.assertContains(date_range, 'name="date_to"')
 
     def test_call_checklist_uses_and_explains_the_provisional_due_date(self):
         provisional_client = Client.objects.create(
@@ -1129,16 +1219,22 @@ class ApplicationFlowTests(TestCase):
         first_page = self.client.get(reverse("call_checklist"), {
             "call_status": "pending",
             "due_filter": "gt7",
+            "date_from": (timezone.localdate() + timedelta(days=1)).isoformat(),
+            "date_to": (timezone.localdate() + timedelta(days=100)).isoformat(),
         })
 
         self.assertContains(first_page, 'aria-label="Page suivante"')
         self.assertContains(first_page, "call_status=pending")
         self.assertContains(first_page, "due_filter=gt7")
+        self.assertContains(first_page, "date_from=")
+        self.assertContains(first_page, "date_to=")
         self.assertNotContains(first_page, "Suivant →")
         second_page = self.client.get(reverse("call_checklist"), {
             "page": 2,
             "call_status": "pending",
             "due_filter": "gt7",
+            "date_from": (timezone.localdate() + timedelta(days=1)).isoformat(),
+            "date_to": (timezone.localdate() + timedelta(days=100)).isoformat(),
         })
         self.assertContains(second_page, 'aria-label="Page précédente"')
         self.assertContains(second_page, "2 / 2")

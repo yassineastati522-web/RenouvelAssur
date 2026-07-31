@@ -44,13 +44,13 @@
 .call-summary {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(3, minmax(112px, 1fr));
+  grid-template-columns: repeat(4, minmax(105px, 1fr));
   gap: 10px;
 }
 
 .call-summary div {
   display: flex;
-  min-width: 112px;
+  min-width: 105px;
   min-height: 90px;
   justify-content: center;
   padding: 15px 18px;
@@ -80,16 +80,37 @@
 
 .call-filters {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(170px, 195px) minmax(185px, 215px) auto;
-  align-items: stretch;
+  grid-template-columns: repeat(2, minmax(150px, 190px)) minmax(155px, 180px) minmax(175px, 205px) auto auto;
+  align-items: end;
   gap: 10px;
   margin-bottom: 18px;
+}
+
+.call-filters label span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .call-filters input,
 .call-filters select,
 .call-filters .btn {
   min-height: 46px;
+}
+
+.call-filters > .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.call-filter-errors {
+  grid-column: 1 / -1;
+  color: #a74539;
+  font-size: 12px;
 }
 
 .call-table {
@@ -281,7 +302,7 @@
   }
 
   .call-summary {
-    width: min(100%, 460px);
+    width: min(100%, 600px);
   }
 
   .call-summary div {
@@ -290,15 +311,6 @@
 
   .call-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .call-filters > input:first-child {
-    grid-column: 1 / -1;
-  }
-
-  .call-filters .btn {
-    grid-column: 1 / -1;
-    width: 100%;
   }
 
   .call-panel > .panel-title {
@@ -405,7 +417,7 @@
 
   .call-summary {
     width: 100%;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .call-summary div {
@@ -415,11 +427,6 @@
 
   .call-summary span {
     font-size: 9px;
-  }
-
-  .call-filters > input:first-child,
-  .call-filters .btn {
-    grid-column: auto;
   }
 
   .call-panel .table-wrap {
