@@ -44,10 +44,11 @@
         <col class="call-col-vehicle">
         <col class="call-col-due">
         <col class="call-col-last">
+        <col class="call-col-attempts">
         <col class="call-col-action">
       </colgroup>
       <thead>
-        <tr><th>Fait</th><th>Client / Police</th><th>Téléphone</th><th>Véhicule</th><th>Échéance / action</th><th>Dernier appel</th><th>Nouvel appel</th></tr>
+        <tr><th>Fait</th><th>Client / Police</th><th>Téléphone</th><th>Véhicule</th><th>Échéance / action</th><th>Dernier appel</th><th>Nb. tentatives</th><th>Nouvel appel</th></tr>
       </thead>
       <tbody>
         {% for contract in contracts %}
@@ -81,7 +82,10 @@
           </td>
           <td data-label="Dernier appel">
             <span class="call-status {{ contract.last_call_result|default:'pending' }}">{{ contract.last_call_label }}</span>
-            {% if contract.last_call_at %}<small>{{ contract.last_call_at|date:"d/m/Y H:i" }} · {{ contract.call_attempts }} tentative{{ contract.call_attempts|pluralize }}</small>{% endif %}
+            {% if contract.last_call_at %}<small>{{ contract.last_call_at|date:"d/m/Y H:i" }}</small>{% endif %}
+          </td>
+          <td data-label="Nombre de tentatives">
+            <span class="attempt-count"><b>{{ contract.call_attempts }}</b><small>tentative{{ contract.call_attempts|pluralize }}</small></span>
           </td>
           <td data-label="Nouvel appel">
             <form method="post" class="quick-call-form">
@@ -91,13 +95,12 @@
                 <option value="">Résultat…</option>
                 {% for value, label in call_results %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
               </select>
-              <input type="text" name="comment" maxlength="500" placeholder="Note…" aria-label="Note facultative pour {{ contract.client.name }}" autocomplete="off">
               <button class="btn primary" title="Enregistrer l’appel">Valider</button>
             </form>
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="7" class="empty">Aucun client ne correspond à cette checklist.</td></tr>
+        <tr><td colspan="8" class="empty">Aucun client ne correspond à cette checklist.</td></tr>
         {% endfor %}
       </tbody>
     </table>

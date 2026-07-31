@@ -222,6 +222,23 @@ def parse_date(value):
     raise ValueError(f"date invalide : {text}")
 
 
+def parse_contract_end_date(value, import_type):
+    """Convertit une borne d'échéance à minuit en dernier jour couvert.
+
+    Les bordereaux de production et les suivis provisoires expriment la fin
+    sous forme de borne exclusive (par exemple 01/08/2026 à 00:00 pour une
+    couverture qui se termine le 31/07/2026). Le fichier des échéances à
+    venir contient déjà le dernier jour couvert et ne doit pas être décalé.
+    """
+    parsed = parse_date(value)
+    if parsed and import_type in {
+        ImportBatch.ImportType.BORDEREAU,
+        ImportBatch.ImportType.PROVISIONAL,
+    }:
+        return parsed - timedelta(days=1)
+    return parsed
+
+
 def parse_decimal(value):
     if value in (None, ""):
         return None
@@ -325,7 +342,10 @@ def analyze_rows(rows):
             else:
                 if not clean_text(row_value(row, mapping, "policy_number")) or not clean_text(row_value(row, mapping, "client_name")):
                     raise ValueError("police et assuré obligatoires")
-                end_date = parse_date(row_value(row, mapping, "end_date"))
+                end_date = parse_contract_end_date(
+                    row_value(row, mapping, "end_date"),
+                    analysis["import_type"],
+                )
                 if not end_date:
                     raise ValueError("date de fin obligatoire")
                 effective_date = parse_date(
@@ -731,7 +751,10 @@ def import_contract_rows(rows, filename, user):
                 "total_premium": parse_decimal(row_value(row, mapping, "total_premium")),
                 "net_payable": parse_decimal(row_value(row, mapping, "net_payable")),
                 "effective_date": parse_date(row_value(row, mapping, "effective_date")),
-                "end_date": parse_date(row_value(row, mapping, "end_date")),
+                "end_date": parse_contract_end_date(
+                    row_value(row, mapping, "end_date"),
+                    import_type,
+                ),
                 "issue_date": parse_date(row_value(row, mapping, "issue_date")),
             }
             if not values["end_date"]:
@@ -913,6 +936,13 @@ def import_contract_rows(rows, filename, user):
                     item_business_identity(item)
                 )
                 if business_contract is not None:
+                    if item["import_type"] == ImportBatch.ImportType.UPCOMING:
+                        # Le fichier d'échéances ne contient pas de prime : il
+                        # complète toujours le contrat de production existant
+                        # au lieu d'être rejeté comme un doublon moins cher.
+                        item["matched_contract_id"] = business_contract.pk
+                        filtered_parsed.append(item)
+                        continue
                     incoming_premium = premium_rank(
                         item["values"]["total_premium"]
                     )

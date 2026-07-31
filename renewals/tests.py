@@ -256,7 +256,26 @@ class ImportServiceTests(TestCase):
         self.assertEqual(str(contract.total_premium), "5020.35")
         self.assertEqual(str(contract.net_premium), "4286.78")
         self.assertEqual(str(contract.net_payable), "4562.82")
-        self.assertEqual(contract.end_date.isoformat(), "2027-07-19")
+        self.assertEqual(contract.end_date.isoformat(), "2027-07-18")
+
+    def test_bordereau_midnight_boundary_becomes_previous_covered_day(self):
+        upload = excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "NUM_QUITTANCE",
+            ],
+            [
+                "8/BERRAQ-001", "Affaire nouvelle", "BERRAQ HOSSAM",
+                "01/08/2025", "01/08/2026", 900, "Q-BERRAQ-001",
+            ],
+        ])
+
+        batch = import_contracts(upload, self.admin)
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 0))
+        contract = Contract.objects.get()
+        self.assertEqual(contract.client.name, "BERRAQ HOSSAM")
+        self.assertEqual(contract.end_date, date(2026, 7, 31))
 
     def upcoming_upload(self, policy="0207161064", filename="echeances.xls"):
         return excel_upload([
@@ -636,6 +655,72 @@ class HighestPremiumDuplicateMigrationTests(TransactionTestCase):
         self.assertEqual(predecessor_links, {None, survivor.pk})
 
 
+class ExpiryBoundaryMigrationTests(TransactionTestCase):
+    migrate_from = ("renewals", "0011_keep_highest_premium_duplicates")
+    migrate_to = ("renewals", "0012_normalize_expiry_boundaries")
+
+    def test_migration_corrects_all_stored_bordereau_boundaries(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        ClientModel = old_apps.get_model("renewals", "Client")
+        ContractModel = old_apps.get_model("renewals", "Contract")
+        client = ClientModel.objects.create(name="Audit des échéances")
+
+        bordereau = ContractModel.objects.create(
+            client=client,
+            policy_number="BERRAQ-HISTORY",
+            receipt="Q-BERRAQ-HISTORY",
+            event="Affaire nouvelle",
+            effective_date=date(2025, 8, 1),
+            end_date=date(2026, 8, 1),
+        )
+        provisional = ContractModel.objects.create(
+            client=client,
+            policy_number="PROVISIONAL-HISTORY",
+            receipt="Q-PROVISIONAL-HISTORY",
+            is_provisional=True,
+            effective_date=date(2026, 1, 1),
+            end_date=date(2027, 1, 1),
+        )
+        upcoming = ContractModel.objects.create(
+            client=client,
+            policy_number="UPCOMING-HISTORY",
+            receipt="Q-UPCOMING-HISTORY",
+            event="Affaire nouvelle",
+            end_date=date(2026, 8, 1),
+            from_upcoming_file=True,
+        )
+        manual = ContractModel.objects.create(
+            client=client,
+            policy_number="MANUAL-HISTORY",
+            receipt="",
+            end_date=date(2026, 8, 1),
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        ContractModel = new_apps.get_model("renewals", "Contract")
+
+        self.assertEqual(
+            ContractModel.objects.get(pk=bordereau.pk).end_date,
+            date(2026, 7, 31),
+        )
+        self.assertEqual(
+            ContractModel.objects.get(pk=provisional.pk).end_date,
+            date(2026, 12, 31),
+        )
+        self.assertEqual(
+            ContractModel.objects.get(pk=upcoming.pk).end_date,
+            date(2026, 8, 1),
+        )
+        self.assertEqual(
+            ContractModel.objects.get(pk=manual.pk).end_date,
+            date(2026, 8, 1),
+        )
+
+
 class ApplicationFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("agent", password="secret", role=User.Role.AGENT)
@@ -849,6 +934,9 @@ class ApplicationFlowTests(TestCase):
         self.assertContains(response, "Véhicule")
         self.assertContains(response, "DACIA")
         self.assertContains(response, "12345-A-1")
+        self.assertContains(response, "Nb. tentatives")
+        self.assertContains(response, "0</b><small>tentative")
+        self.assertNotContains(response, 'name="comment"')
 
         response = self.client.post(reverse("call_checklist"), {
             "contract": self.contract.pk,
@@ -866,6 +954,7 @@ class ApplicationFlowTests(TestCase):
 
         response = self.client.get(reverse("call_checklist"))
         self.assertContains(response, "Boîte vocale")
+        self.assertContains(response, "1</b><small>tentative")
         self.assertContains(response, "checked")
         pending = self.client.get(reverse("call_checklist"), {"call_status": "pending"})
         self.assertNotContains(pending, self.contract.policy_number)
