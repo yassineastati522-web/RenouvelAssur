@@ -562,7 +562,7 @@ def premium_rank(value):
     return value if value is not None else Decimal("-Infinity")
 
 
-def negative_premium(value):
+def negative_amount(value):
     if value in (None, 0):
         return None
     return -abs(value)
@@ -775,7 +775,9 @@ def combine_batch_termination_rows(items):
             "is_termination": True,
             "termination_date": termination_item["termination_date"],
             "termination_reason": termination_item["termination_reason"],
-            "termination_premium": termination_item["termination_premium"],
+            "termination_net_payable": termination_item[
+                "termination_net_payable"
+            ],
             "source_end_date": termination_item["source_end_date"],
             "renewed": False,
             "values": merged_values,
@@ -1087,8 +1089,8 @@ def import_contract_rows(rows, filename, user):
                 "is_termination": termination_event,
                 "termination_date": termination_date,
                 "termination_reason": values["event"],
-                "termination_premium": (
-                    negative_premium(values["total_premium"])
+                "termination_net_payable": (
+                    negative_amount(values["net_payable"])
                     if termination_event
                     else None
                 ),
@@ -1274,12 +1276,12 @@ def import_contract_rows(rows, filename, user):
                             )
                             # Le montant doit rester lié à la première
                             # date d'arrêt. Une ristourne plus tardive ne doit
-                            # pas devenir la prime de la résiliation initiale.
-                            item["termination_premium"] = (
-                                termination_candidate.termination.premium
+                            # pas devenir le NET_A_PAYE de la résiliation initiale.
+                            item["termination_net_payable"] = (
+                                termination_candidate.termination.net_payable
                             )
-                    # Une résiliation doit être appliquée même si sa prime est
-                    # négative ou inférieure à celle du contrat en cours.
+                    # Une résiliation doit être appliquée même si son montant est
+                    # négatif ou inférieur à celui du contrat en cours.
                     filtered_parsed.append(item)
                     continue
                 closed_cycle = select_closed_cycle_candidate(
@@ -1546,7 +1548,7 @@ def import_contract_rows(rows, filename, user):
             for contract, item in terminated_contracts:
                 termination_date = item["termination_date"]
                 termination_reason = item["termination_reason"]
-                termination_premium = item["termination_premium"]
+                termination_net_payable = item["termination_net_payable"]
                 termination = existing_terminations.get(contract.pk)
                 if termination is None:
                     new_terminations.append(
@@ -1554,7 +1556,7 @@ def import_contract_rows(rows, filename, user):
                             contract=contract,
                             date=termination_date,
                             reason=termination_reason,
-                            premium=termination_premium,
+                            net_payable=termination_net_payable,
                             recorded_by=user,
                         )
                     )
@@ -1567,10 +1569,11 @@ def import_contract_rows(rows, filename, user):
                         termination.reason = termination_reason
                         changed = True
                     if (
-                        termination_premium is not None
-                        and termination.premium != termination_premium
+                        termination_net_payable is not None
+                        and termination.net_payable
+                        != termination_net_payable
                     ):
-                        termination.premium = termination_premium
+                        termination.net_payable = termination_net_payable
                         changed = True
                     if changed:
                         changed_terminations.append(termination)
@@ -1578,7 +1581,7 @@ def import_contract_rows(rows, filename, user):
             if changed_terminations:
                 Termination.objects.bulk_update(
                     changed_terminations,
-                    ["date", "reason", "premium"],
+                    ["date", "reason", "net_payable"],
                     batch_size=500,
                 )
             mark_vehicle_renewals()

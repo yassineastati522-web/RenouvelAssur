@@ -367,29 +367,29 @@ class ImportServiceTests(TestCase):
         self.assertEqual(termination.date.isoformat(), "2026-07-07")
         self.assertEqual(termination.contract.end_date, date(2026, 7, 7))
 
-    def test_termination_reuses_active_contract_and_preserves_its_premium(self):
+    def test_termination_reuses_contract_and_stores_negative_net_payable(self):
         active_upload = excel_upload([
             [
                 "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
-                "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
-                "NUM_QUITTANCE",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "NET_A_PAYE", "MARQUE",
+                "IMMATDEF", "NUM_QUITTANCE",
             ],
             [
                 "10/0167835931", "Affaire nouvelle", "LAFRID HAMID",
-                "30/07/2025", "30/07/2026", 850, "FICE", "58-007098",
-                "Q-LAFRID-ACTIF",
+                "30/07/2025", "30/07/2026", 850, 780, "FICE",
+                "58-007098", "Q-LAFRID-ACTIF",
             ],
         ])
         termination_upload = excel_upload([
             [
                 "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
-                "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
-                "NUM_QUITTANCE",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "NET_A_PAYE", "MARQUE",
+                "IMMATDEF", "NUM_QUITTANCE",
             ],
             [
                 "10/0167835931", "Résiliation", "LAFRID HAMID",
-                "07/07/2026", "30/07/2026", "-77,15", "FICE",
-                "58-007098", "146711576",
+                "07/07/2026", "30/07/2026", "-77,15", "-68,95",
+                "FICE", "58-007098", "146711576",
             ],
         ])
         import_contracts(active_upload, self.admin)
@@ -407,9 +407,13 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
         self.assertEqual(contract.end_date, date(2026, 7, 7))
         self.assertEqual(contract.effective_date, date(2025, 7, 30))
+        self.assertEqual(contract.net_payable, Decimal("780.00"))
         self.assertEqual(contract.termination.date, date(2026, 7, 7))
-        self.assertEqual(contract.termination.premium, Decimal("-77.15"))
-        self.assertEqual(contract.termination.display_premium, Decimal("-77.15"))
+        self.assertEqual(contract.termination.net_payable, Decimal("-68.95"))
+        self.assertEqual(
+            contract.termination.display_net_payable,
+            Decimal("-68.95"),
+        )
 
     def test_upcoming_reimport_does_not_recreate_terminated_contract(self):
         def upcoming_upload():
@@ -427,13 +431,13 @@ class ImportServiceTests(TestCase):
         termination_upload = excel_upload([
             [
                 "CAT", "POLICE", "Nature Evenement", "CLIENT",
-                "DATE_EFFET", "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE",
-                "IMMATDEF", "NUM_QUITTANCE",
+                "DATE_EFFET", "DATE_ECHEANCE", "PRIME_TOTAL",
+                "NET_A_PAYE", "MARQUE", "IMMATDEF", "NUM_QUITTANCE",
             ],
             [
                 "10", "0167835931", "Résiliation", "LAFRID HAMID",
-                "07/07/2026", "30/07/2026", "-77,15", "FICE",
-                "58-007098", "146711576",
+                "07/07/2026", "30/07/2026", "-77,15", "-68,95",
+                "FICE", "58-007098", "146711576",
             ],
         ])
         import_contracts(upcoming_upload(), self.admin)
@@ -449,29 +453,69 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
         self.assertEqual(contract.end_date, date(2026, 7, 7))
         self.assertEqual(contract.termination.date, date(2026, 7, 7))
-        self.assertEqual(contract.termination.premium, Decimal("-77.15"))
+        self.assertEqual(contract.termination.net_payable, Decimal("-68.95"))
+
+    def test_reimport_restores_missing_historical_termination_net_payable(self):
+        client = Client.objects.create(name="LAFRID HAMID")
+        contract = Contract.objects.create(
+            client=client,
+            policy_number="10/0167835931",
+            receipt="Q-LAFRID-ACTIF",
+            brand="FICE",
+            registration="58-007098",
+            effective_date=date(2025, 7, 30),
+            end_date=date(2026, 7, 7),
+            total_premium=Decimal("850.00"),
+            net_payable=Decimal("780.00"),
+            renewal_status=Contract.RenewalStatus.TERMINATED,
+        )
+        Termination.objects.create(
+            contract=contract,
+            date=date(2026, 7, 7),
+            reason="Résiliation",
+        )
+        upload = excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "NET_A_PAYE", "MARQUE",
+                "IMMATDEF", "NUM_QUITTANCE",
+            ],
+            [
+                "10/0167835931", "Résiliation", "LAFRID HAMID",
+                "07/07/2026", "30/07/2026", "-77,15", "-68,95",
+                "FICE", "58-007098", "146711576",
+            ],
+        ])
+
+        batch = import_contracts(upload, self.admin)
+
+        self.assertEqual((batch.added_rows, batch.updated_rows), (0, 1))
+        contract.refresh_from_db()
+        self.assertEqual(contract.total_premium, Decimal("850.00"))
+        self.assertEqual(contract.net_payable, Decimal("780.00"))
+        self.assertEqual(contract.termination.net_payable, Decimal("-68.95"))
 
     def test_active_and_termination_rows_in_same_file_create_one_contract(self):
         upload = excel_upload([
             [
                 "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
-                "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
-                "NUM_QUITTANCE",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "NET_A_PAYE", "MARQUE",
+                "IMMATDEF", "NUM_QUITTANCE",
             ],
             [
                 "8/KHRIBACH-001", "Affaire nouvelle", "KHRIBACH KHALID",
-                "01/09/2025", "01/09/2026", 1200, "DACIA", "123-A-4",
-                "Q-KHRIBACH-ACTIF",
+                "01/09/2025", "01/09/2026", 1200, 1090, "DACIA",
+                "123-A-4", "Q-KHRIBACH-ACTIF",
             ],
             [
                 "8/KHRIBACH-001", "Résiliation", "KHRIBACH KHALID",
-                "15/07/2026", "01/09/2026", 125, "DACIA", "123-A-4",
-                "Q-KHRIBACH-RESIL",
+                "15/07/2026", "01/09/2026", 125, "110,75", "DACIA",
+                "123-A-4", "Q-KHRIBACH-RESIL",
             ],
             [
                 "8/KHRIBACH-001", "Ristourne", "KHRIBACH KHALID",
-                "16/07/2026", "01/09/2026", -25, "DACIA", "123-A-4",
-                "Q-KHRIBACH-RISTOURNE",
+                "16/07/2026", "01/09/2026", -25, "-22,50", "DACIA",
+                "123-A-4", "Q-KHRIBACH-RISTOURNE",
             ],
         ])
 
@@ -485,28 +529,28 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.end_date, date(2026, 7, 15))
         self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
         self.assertEqual(contract.termination.date, date(2026, 7, 15))
-        self.assertEqual(contract.termination.premium, Decimal("-125.00"))
+        self.assertEqual(contract.termination.net_payable, Decimal("-110.75"))
 
     def test_later_termination_event_keeps_first_stop_without_duplicate(self):
         headers = [
             "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
-            "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
-            "NUM_QUITTANCE",
+            "DATE_ECHEANCE", "PRIME_TOTAL", "NET_A_PAYE", "MARQUE",
+            "IMMATDEF", "NUM_QUITTANCE",
         ]
         import_contracts(excel_upload([
             headers,
             [
                 "8/KHRIBACH-WEEKLY", "Affaire nouvelle", "KHRIBACH KHALID",
-                "01/09/2025", "01/09/2026", 1200, "DACIA", "123-A-4",
-                "Q-WEEKLY-ACTIVE",
+                "01/09/2025", "01/09/2026", 1200, 1090, "DACIA",
+                "123-A-4", "Q-WEEKLY-ACTIVE",
             ],
         ]), self.admin)
         import_contracts(excel_upload([
             headers,
             [
                 "8/KHRIBACH-WEEKLY", "Annulation", "KHRIBACH KHALID",
-                "15/07/2026", "01/09/2026", -125, "DACIA", "123-A-4",
-                "Q-WEEKLY-STOP-1",
+                "15/07/2026", "01/09/2026", -125, -110, "DACIA",
+                "123-A-4", "Q-WEEKLY-STOP-1",
             ],
         ]), self.admin)
 
@@ -514,8 +558,8 @@ class ImportServiceTests(TestCase):
             headers,
             [
                 "8/KHRIBACH-WEEKLY", "Ristourne", "KHRIBACH KHALID",
-                "20/07/2026", "01/09/2026", -25, "DACIA", "123-A-4",
-                "Q-WEEKLY-STOP-2",
+                "20/07/2026", "01/09/2026", -25, -20, "DACIA",
+                "123-A-4", "Q-WEEKLY-STOP-2",
             ],
         ]), self.admin)
 
@@ -524,7 +568,7 @@ class ImportServiceTests(TestCase):
         contract = Contract.objects.get()
         self.assertEqual(contract.end_date, date(2026, 7, 15))
         self.assertEqual(contract.termination.date, date(2026, 7, 15))
-        self.assertEqual(contract.termination.premium, Decimal("-125.00"))
+        self.assertEqual(contract.termination.net_payable, Decimal("-110.00"))
 
     def test_bordereau_enriches_upcoming_contract_without_overwriting_due_date(self):
         import_contracts(self.upcoming_upload(), self.admin)
@@ -1107,6 +1151,68 @@ class TerminationPremiumMigrationTests(TransactionTestCase):
         )
 
 
+class TerminationNetPayableMigrationTests(TransactionTestCase):
+    migrate_from = ("renewals", "0014_termination_premium")
+    migrate_to = ("renewals", "0015_use_net_payable_for_terminations")
+
+    def test_migration_replaces_total_premium_with_exact_negative_net_payable(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        ClientModel = old_apps.get_model("renewals", "Client")
+        ContractModel = old_apps.get_model("renewals", "Contract")
+        TerminationModel = old_apps.get_model("renewals", "Termination")
+
+        client = ClientModel.objects.create(name="CLIENT NET A PAYER")
+        negative_source = ContractModel.objects.create(
+            client=client,
+            policy_number="10/NEGATIVE-NET",
+            receipt="Q-NEGATIVE-NET",
+            end_date=date(2026, 7, 7),
+            total_premium=Decimal("-77.15"),
+            net_payable=Decimal("-68.95"),
+            renewal_status="terminated",
+        )
+        positive_survivor = ContractModel.objects.create(
+            client=client,
+            policy_number="10/POSITIVE-NET",
+            receipt="Q-POSITIVE-NET",
+            end_date=date(2026, 7, 8),
+            total_premium=Decimal("850.00"),
+            net_payable=Decimal("780.00"),
+            renewal_status="terminated",
+        )
+        TerminationModel.objects.create(
+            contract=negative_source,
+            date=date(2026, 7, 7),
+            reason="Résiliation",
+            premium=Decimal("-77.15"),
+        )
+        TerminationModel.objects.create(
+            contract=positive_survivor,
+            date=date(2026, 7, 8),
+            reason="Résiliation",
+            premium=Decimal("-77.15"),
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        TerminationModel = new_apps.get_model("renewals", "Termination")
+
+        self.assertEqual(
+            TerminationModel.objects.get(
+                contract_id=negative_source.pk
+            ).net_payable,
+            Decimal("-68.95"),
+        )
+        self.assertIsNone(
+            TerminationModel.objects.get(
+                contract_id=positive_survivor.pk
+            ).net_payable
+        )
+
+
 class ApplicationFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("agent", password="secret", role=User.Role.AGENT)
@@ -1679,7 +1785,7 @@ class ApplicationFlowTests(TestCase):
         Termination.objects.create(
             contract=self.contract,
             reason="Résiliation client",
-            premium=Decimal("-77.15"),
+            net_payable=Decimal("-68.95"),
             recorded_by=self.user,
         )
 
@@ -1711,16 +1817,43 @@ class ApplicationFlowTests(TestCase):
         visible = list(response.context["terminations"])
         self.assertEqual(len(visible), 2)
         self.assertEqual({item.client_terminated_count for item in visible}, {2})
-        displayed_premiums = {
-            item.contract.policy_number: item.display_premium
+        displayed_amounts = {
+            item.contract.policy_number: item.display_net_payable
             for item in visible
         }
-        self.assertEqual(displayed_premiums["P-1"], Decimal("-77.15"))
-        self.assertIsNone(displayed_premiums["P-2"])
+        self.assertEqual(displayed_amounts["P-1"], Decimal("-68.95"))
+        self.assertIsNone(displayed_amounts["P-2"])
         self.assertContains(response, "2 contrats", count=2)
-        self.assertContains(response, "-77,15")
+        self.assertContains(response, "-68,95")
         self.assertNotContains(response, "250,00")
+        self.assertContains(response, "1 montant NET_A_PAYE ancien reste à restaurer")
         self.assertNotContains(response, "P-HIDDEN")
+
+    def test_client_and_contract_pages_use_termination_net_payable(self):
+        self.contract.total_premium = Decimal("500.00")
+        self.contract.renewal_status = Contract.RenewalStatus.TERMINATED
+        self.contract.save(
+            update_fields=["total_premium", "renewal_status", "updated_at"]
+        )
+        Termination.objects.create(
+            contract=self.contract,
+            reason="Résiliation client",
+            net_payable=Decimal("-68.95"),
+            recorded_by=self.user,
+        )
+
+        client_page = self.client.get(
+            reverse("client_detail", args=[self.client_obj.pk])
+        )
+        contract_page = self.client.get(
+            reverse("contract_detail", args=[self.contract.pk])
+        )
+
+        for response in (client_page, contract_page):
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "-68,95")
+            self.assertNotContains(response, "500,00")
+        self.assertContains(contract_page, "NET_A_PAYE de résiliation")
 
     def test_selecting_terminated_status_creates_visible_termination_record(self):
         self.contract.end_date = timezone.localdate() - timedelta(days=5)

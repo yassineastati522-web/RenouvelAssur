@@ -31,7 +31,12 @@
       <dt>Téléphone</dt><dd><a href="tel:{{ contract.client.phone }}">{{ contract.client.phone|default:"À renseigner" }}</a></dd>
       <dt>Marque</dt><dd>{{ contract.brand|default:"—" }}</dd>
       <dt>Immatriculation</dt><dd>{{ contract.registration|default:"—" }}</dd>
-      <dt>Prime TTC</dt><dd>{{ contract.total_premium|default_if_none:0|floatformat:2 }} MAD</dd>
+      <dt>{% if contract.is_terminated %}NET_A_PAYE de résiliation{% else %}Prime TTC{% endif %}</dt>
+      <dd>
+        {% with amount=contract.display_amount %}
+          {% if amount != None %}{{ amount|floatformat:2 }} MAD{% else %}—{% endif %}
+        {% endwith %}
+      </dd>
       <dt>Date d’effet</dt><dd>{{ contract.effective_date|date:"d/m/Y"|default:"—" }}</dd>
       {% if contract.is_provisional %}
         <dt>Suivi provisoire</dt><dd><span class="provisional-badge">Provisoire {{ contract.provisional_delivered_count }}/{{ contract.provisional_target_count }}</span></dd>

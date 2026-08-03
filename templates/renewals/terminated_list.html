@@ -5,9 +5,15 @@
   <div>
     <span class="eyebrow">PORTEFEUILLE PERDU</span>
     <h1>Contrats résiliés</h1>
-    <p>Suivez les motifs, les primes perdues et le nombre de résiliations par client.</p>
+    <p>Suivez les motifs, les NET_A_PAYE négatifs et le nombre de résiliations par client.</p>
   </div>
 </div>
+{% if missing_net_payable_count %}
+<div class="alert warning">
+  {{ missing_net_payable_count }} montant{{ missing_net_payable_count|pluralize }} NET_A_PAYE ancien{{ missing_net_payable_count|pluralize }} {% if missing_net_payable_count == 1 %}reste{% else %}restent{% endif %} à restaurer.
+  Réimportez le ou les bordereaux de production contenant ces résiliations : aucun contrat ne sera dupliqué.
+</div>
+{% endif %}
 <section class="panel table-panel">
   <div class="table-wrap">
     <table>
@@ -18,7 +24,7 @@
           <th>Contrats résiliés du client</th>
           <th>Date</th>
           <th>Motif</th>
-          <th>Prime perdue</th>
+          <th>NET_A_PAYE</th>
           <th></th>
         </tr>
       </thead>
@@ -31,8 +37,8 @@
           <td>{{ item.date|date:"d/m/Y" }}</td>
           <td>{{ item.reason|default:"Non renseigné" }}</td>
           <td>
-            {% with premium=item.display_premium %}
-              {% if premium != None %}<b>{{ premium|floatformat:2 }}</b> MAD{% else %}—{% endif %}
+            {% with amount=item.display_net_payable %}
+              {% if amount != None %}<b>{{ amount|floatformat:2 }}</b> MAD{% else %}—{% endif %}
             {% endwith %}
           </td>
           <td><a class="arrow-btn" href="{% url 'contract_detail' item.contract.pk %}">→</a></td>
