@@ -28,7 +28,11 @@ QUICK_CALL_RESULTS = [
 
 
 def scoped_contracts(user):
-    qs = Contract.objects.select_related("client", "assigned_agent").prefetch_related("interactions")
+    qs = Contract.objects.select_related(
+        "client",
+        "assigned_agent",
+        "termination",
+    ).prefetch_related("interactions")
     return qs if user.is_agency_admin else qs.filter(Q(assigned_agent=user) | Q(assigned_agent__isnull=True))
 
 
@@ -146,7 +150,11 @@ def terminated_list(request):
             distinct=True,
         ),
     ).order_by("-date", "-pk")
-    return render(request, "renewals/terminated_list.html", {"terminations": paginate(request, qs)})
+    missing_net_payable_count = qs.filter(net_payable__isnull=True).count()
+    return render(request, "renewals/terminated_list.html", {
+        "terminations": paginate(request, qs),
+        "missing_net_payable_count": missing_net_payable_count,
+    })
 
 
 @login_required
