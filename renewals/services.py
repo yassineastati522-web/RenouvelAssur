@@ -562,6 +562,12 @@ def premium_rank(value):
     return value if value is not None else Decimal("-Infinity")
 
 
+def negative_premium(value):
+    if value in (None, 0):
+        return None
+    return -abs(value)
+
+
 def indicates_renewed(value):
     flag = normalize(value)
     if not flag or flag.startswith("non ") or flag in {"non", "no", "0", "false"}:
@@ -769,6 +775,7 @@ def combine_batch_termination_rows(items):
             "is_termination": True,
             "termination_date": termination_item["termination_date"],
             "termination_reason": termination_item["termination_reason"],
+            "termination_premium": termination_item["termination_premium"],
             "source_end_date": termination_item["source_end_date"],
             "renewed": False,
             "values": merged_values,
@@ -1080,6 +1087,11 @@ def import_contract_rows(rows, filename, user):
                 "is_termination": termination_event,
                 "termination_date": termination_date,
                 "termination_reason": values["event"],
+                "termination_premium": (
+                    negative_premium(values["total_premium"])
+                    if termination_event
+                    else None
+                ),
                 "source_end_date": values["end_date"],
                 "values": values,
             })
@@ -1259,6 +1271,12 @@ def import_contract_rows(rows, filename, user):
                             item["termination_reason"] = (
                                 termination_candidate.termination.reason
                                 or item["termination_reason"]
+                            )
+                            # Le montant doit rester lié à la première
+                            # date d'arrêt. Une ristourne plus tardive ne doit
+                            # pas devenir la prime de la résiliation initiale.
+                            item["termination_premium"] = (
+                                termination_candidate.termination.premium
                             )
                     # Une résiliation doit être appliquée même si sa prime est
                     # négative ou inférieure à celle du contrat en cours.
@@ -1528,6 +1546,7 @@ def import_contract_rows(rows, filename, user):
             for contract, item in terminated_contracts:
                 termination_date = item["termination_date"]
                 termination_reason = item["termination_reason"]
+                termination_premium = item["termination_premium"]
                 termination = existing_terminations.get(contract.pk)
                 if termination is None:
                     new_terminations.append(
@@ -1535,21 +1554,31 @@ def import_contract_rows(rows, filename, user):
                             contract=contract,
                             date=termination_date,
                             reason=termination_reason,
+                            premium=termination_premium,
                             recorded_by=user,
                         )
                     )
-                elif (
-                    termination.date != termination_date
-                    or termination.reason != termination_reason
-                ):
-                    termination.date = termination_date
-                    termination.reason = termination_reason
-                    changed_terminations.append(termination)
+                else:
+                    changed = False
+                    if termination.date != termination_date:
+                        termination.date = termination_date
+                        changed = True
+                    if termination.reason != termination_reason:
+                        termination.reason = termination_reason
+                        changed = True
+                    if (
+                        termination_premium is not None
+                        and termination.premium != termination_premium
+                    ):
+                        termination.premium = termination_premium
+                        changed = True
+                    if changed:
+                        changed_terminations.append(termination)
             Termination.objects.bulk_create(new_terminations, batch_size=500)
             if changed_terminations:
                 Termination.objects.bulk_update(
                     changed_terminations,
-                    ["date", "reason"],
+                    ["date", "reason", "premium"],
                     batch_size=500,
                 )
             mark_vehicle_renewals()

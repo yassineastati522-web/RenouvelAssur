@@ -30,7 +30,11 @@
           <td><span class="status">{{ item.client_terminated_count }} contrat{{ item.client_terminated_count|pluralize }}</span></td>
           <td>{{ item.date|date:"d/m/Y" }}</td>
           <td>{{ item.reason|default:"Non renseigné" }}</td>
-          <td><b>{{ item.contract.total_premium|default_if_none:0|floatformat:2 }}</b> MAD</td>
+          <td>
+            {% with premium=item.display_premium %}
+              {% if premium != None %}<b>{{ premium|floatformat:2 }}</b> MAD{% else %}—{% endif %}
+            {% endwith %}
+          </td>
           <td><a class="arrow-btn" href="{% url 'contract_detail' item.contract.pk %}">→</a></td>
         </tr>
         {% empty %}
