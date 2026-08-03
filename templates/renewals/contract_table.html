@@ -12,7 +12,7 @@
           {% with amount=contract.display_amount %}
             {% if amount != None %}<b>{{ amount|floatformat:2 }}</b> MAD{% else %}<b>—</b>{% endif %}
           {% endwith %}
-          <small>{% if contract.is_terminated %}NET_A_PAYE{% else %}Prime TTC{% endif %}</small>
+          <small>{% if contract.is_terminated %}Prime de résiliation{% else %}Prime TTC{% endif %}</small>
         </td>
         <td><b>{{ contract.end_date|date:"d/m/Y" }}</b><small class="{% if contract.days_remaining <= 7 %}danger-text{% endif %}">{{ contract.days_remaining }} jour{{ contract.days_remaining|pluralize }}</small></td>
         <td>{% with last=contract.last_interaction %}{% if last %}{{ last.get_call_result_display }}<small>{{ last.occurred_at|date:"d/m/Y H:i" }}</small>{% else %}<span class="muted">Pas encore appelé</span>{% endif %}{% endwith %}</td>

@@ -150,10 +150,10 @@ def terminated_list(request):
             distinct=True,
         ),
     ).order_by("-date", "-pk")
-    missing_net_payable_count = qs.filter(net_payable__isnull=True).count()
+    missing_premium_count = qs.filter(premium__isnull=True).count()
     return render(request, "renewals/terminated_list.html", {
         "terminations": paginate(request, qs),
-        "missing_net_payable_count": missing_net_payable_count,
+        "missing_premium_count": missing_premium_count,
     })
 
 
@@ -255,7 +255,9 @@ def contract_delete(request, pk):
 
 @login_required
 def call_checklist(request):
-    allowed_contracts = scoped_contracts(request.user)
+    allowed_contracts = exclude_terminated_contracts(
+        scoped_contracts(request.user)
+    )
     if request.method == "POST":
         contract = get_object_or_404(allowed_contracts, pk=request.POST.get("contract"))
         result = request.POST.get("call_result", "")

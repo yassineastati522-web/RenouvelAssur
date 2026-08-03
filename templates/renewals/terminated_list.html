@@ -5,13 +5,13 @@
   <div>
     <span class="eyebrow">PORTEFEUILLE PERDU</span>
     <h1>Contrats résiliés</h1>
-    <p>Suivez les motifs, les NET_A_PAYE négatifs et le nombre de résiliations par client.</p>
+    <p>Suivez les motifs, les primes perdues et le nombre de résiliations par client.</p>
   </div>
 </div>
-{% if missing_net_payable_count %}
+{% if missing_premium_count %}
 <div class="alert warning">
-  {{ missing_net_payable_count }} montant{{ missing_net_payable_count|pluralize }} NET_A_PAYE ancien{{ missing_net_payable_count|pluralize }} {% if missing_net_payable_count == 1 %}reste{% else %}restent{% endif %} à restaurer.
-  Réimportez le ou les bordereaux de production contenant ces résiliations : aucun contrat ne sera dupliqué.
+  {{ missing_premium_count }} prime{{ missing_premium_count|pluralize }} de résiliation {% if missing_premium_count == 1 %}reste{% else %}restent{% endif %} à renseigner.
+  Pour une résiliation importée, réimportez le bordereau de production correspondant : aucun contrat ne sera dupliqué. Pour une résiliation saisie manuellement, renseignez la prime depuis l’administration.
 </div>
 {% endif %}
 <section class="panel table-panel">
@@ -24,7 +24,7 @@
           <th>Contrats résiliés du client</th>
           <th>Date</th>
           <th>Motif</th>
-          <th>NET_A_PAYE</th>
+          <th>Prime perdue</th>
           <th></th>
         </tr>
       </thead>
@@ -37,7 +37,7 @@
           <td>{{ item.date|date:"d/m/Y" }}</td>
           <td>{{ item.reason|default:"Non renseigné" }}</td>
           <td>
-            {% with amount=item.display_net_payable %}
+            {% with amount=item.display_premium %}
               {% if amount != None %}<b>{{ amount|floatformat:2 }}</b> MAD{% else %}—{% endif %}
             {% endwith %}
           </td>
