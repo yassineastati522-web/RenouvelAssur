@@ -34,4 +34,19 @@ class ContractAdmin(admin.ModelAdmin):
         "client__name",
     )
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.is_terminated:
+            Termination.objects.update_or_create(
+                contract=obj,
+                defaults={
+                    "date": obj.end_date,
+                    "reason": obj.event or "Résiliation",
+                    "recorded_by": request.user,
+                },
+            )
+        else:
+            # Une réouverture est une correction réservée à l'administrateur.
+            Termination.objects.filter(contract=obj).delete()
+
 admin.site.register([ImportBatch, CallInteraction, Renewal, Termination])
