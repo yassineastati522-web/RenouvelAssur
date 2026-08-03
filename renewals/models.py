@@ -223,5 +223,41 @@ class Termination(models.Model):
     contract = models.OneToOneField(Contract, related_name="termination", on_delete=models.CASCADE)
     date = models.DateField(default=timezone.localdate)
     reason = models.CharField(max_length=255, blank=True)
+    premium = models.DecimalField(
+        "prime de résiliation",
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
     recorded_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(premium__isnull=True)
+                    | models.Q(premium__lt=0)
+                ),
+                name="termination_premium_negative_or_null",
+            ),
+        ]
+
+    @property
+    def display_premium(self):
+        """Retourne toujours une prime de résiliation négative.
+
+        Une ancienne ligne de résiliation peut encore porter sa prime sur le
+        contrat lui-même. En revanche, une prime positive de contrat ne doit
+        jamais être présentée comme le montant de la résiliation : ces deux
+        montants sont différents.
+        """
+        value = self.premium
+        if value is None:
+            value = self.contract.total_premium
+            if value is None or value >= 0:
+                return None
+        if value == 0:
+            return None
+        return -abs(value)

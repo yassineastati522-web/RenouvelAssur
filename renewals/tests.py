@@ -408,6 +408,8 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.end_date, date(2026, 7, 7))
         self.assertEqual(contract.effective_date, date(2025, 7, 30))
         self.assertEqual(contract.termination.date, date(2026, 7, 7))
+        self.assertEqual(contract.termination.premium, Decimal("-77.15"))
+        self.assertEqual(contract.termination.display_premium, Decimal("-77.15"))
 
     def test_upcoming_reimport_does_not_recreate_terminated_contract(self):
         def upcoming_upload():
@@ -447,6 +449,7 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
         self.assertEqual(contract.end_date, date(2026, 7, 7))
         self.assertEqual(contract.termination.date, date(2026, 7, 7))
+        self.assertEqual(contract.termination.premium, Decimal("-77.15"))
 
     def test_active_and_termination_rows_in_same_file_create_one_contract(self):
         upload = excel_upload([
@@ -462,7 +465,7 @@ class ImportServiceTests(TestCase):
             ],
             [
                 "8/KHRIBACH-001", "Résiliation", "KHRIBACH KHALID",
-                "15/07/2026", "01/09/2026", -125, "DACIA", "123-A-4",
+                "15/07/2026", "01/09/2026", 125, "DACIA", "123-A-4",
                 "Q-KHRIBACH-RESIL",
             ],
             [
@@ -482,6 +485,7 @@ class ImportServiceTests(TestCase):
         self.assertEqual(contract.end_date, date(2026, 7, 15))
         self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
         self.assertEqual(contract.termination.date, date(2026, 7, 15))
+        self.assertEqual(contract.termination.premium, Decimal("-125.00"))
 
     def test_later_termination_event_keeps_first_stop_without_duplicate(self):
         headers = [
@@ -520,6 +524,7 @@ class ImportServiceTests(TestCase):
         contract = Contract.objects.get()
         self.assertEqual(contract.end_date, date(2026, 7, 15))
         self.assertEqual(contract.termination.date, date(2026, 7, 15))
+        self.assertEqual(contract.termination.premium, Decimal("-125.00"))
 
     def test_bordereau_enriches_upcoming_contract_without_overwriting_due_date(self):
         import_contracts(self.upcoming_upload(), self.admin)
@@ -1041,6 +1046,64 @@ class TerminationConsolidationMigrationTests(TransactionTestCase):
         self.assertEqual(successor.end_date, date(2027, 7, 6))
         self.assertFalse(
             TerminationModel.objects.filter(contract_id=successor.pk).exists()
+        )
+
+
+class TerminationPremiumMigrationTests(TransactionTestCase):
+    migrate_from = ("renewals", "0013_consolidate_terminations")
+    migrate_to = ("renewals", "0014_termination_premium")
+
+    def test_migration_preserves_only_a_real_negative_amount(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        ClientModel = old_apps.get_model("renewals", "Client")
+        ContractModel = old_apps.get_model("renewals", "Contract")
+        TerminationModel = old_apps.get_model("renewals", "Termination")
+
+        client = ClientModel.objects.create(name="CLIENT RESILIE")
+        negative_contract = ContractModel.objects.create(
+            client=client,
+            policy_number="8/NEGATIVE",
+            receipt="Q-NEGATIVE",
+            end_date=date(2026, 7, 7),
+            total_premium=Decimal("-77.15"),
+            renewal_status="terminated",
+        )
+        positive_contract = ContractModel.objects.create(
+            client=client,
+            policy_number="8/POSITIVE",
+            receipt="Q-POSITIVE",
+            end_date=date(2026, 7, 8),
+            total_premium=Decimal("850.00"),
+            renewal_status="terminated",
+        )
+        TerminationModel.objects.create(
+            contract=negative_contract,
+            date=date(2026, 7, 7),
+            reason="Résiliation",
+        )
+        TerminationModel.objects.create(
+            contract=positive_contract,
+            date=date(2026, 7, 8),
+            reason="Résiliation manuelle",
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        TerminationModel = new_apps.get_model("renewals", "Termination")
+
+        self.assertEqual(
+            TerminationModel.objects.get(
+                contract_id=negative_contract.pk
+            ).premium,
+            Decimal("-77.15"),
+        )
+        self.assertIsNone(
+            TerminationModel.objects.get(
+                contract_id=positive_contract.pk
+            ).premium
         )
 
 
@@ -1611,8 +1674,14 @@ class ApplicationFlowTests(TestCase):
 
     def test_terminated_list_shows_contract_count_per_client_within_agent_scope(self):
         self.contract.renewal_status = Contract.RenewalStatus.TERMINATED
-        self.contract.save(update_fields=["renewal_status", "updated_at"])
-        Termination.objects.create(contract=self.contract, reason="Résiliation client", recorded_by=self.user)
+        self.contract.total_premium = Decimal("500.00")
+        self.contract.save(update_fields=["renewal_status", "total_premium", "updated_at"])
+        Termination.objects.create(
+            contract=self.contract,
+            reason="Résiliation client",
+            premium=Decimal("-77.15"),
+            recorded_by=self.user,
+        )
 
         second_contract = Contract.objects.create(
             client=self.client_obj,
@@ -1620,6 +1689,7 @@ class ApplicationFlowTests(TestCase):
             policy_number="P-2",
             receipt="Q-2",
             end_date=timezone.localdate() + timedelta(days=30),
+            total_premium=Decimal("250.00"),
             renewal_status=Contract.RenewalStatus.TERMINATED,
         )
         Termination.objects.create(contract=second_contract, reason="Deuxième résiliation", recorded_by=self.user)
@@ -1641,7 +1711,15 @@ class ApplicationFlowTests(TestCase):
         visible = list(response.context["terminations"])
         self.assertEqual(len(visible), 2)
         self.assertEqual({item.client_terminated_count for item in visible}, {2})
+        displayed_premiums = {
+            item.contract.policy_number: item.display_premium
+            for item in visible
+        }
+        self.assertEqual(displayed_premiums["P-1"], Decimal("-77.15"))
+        self.assertIsNone(displayed_premiums["P-2"])
         self.assertContains(response, "2 contrats", count=2)
+        self.assertContains(response, "-77,15")
+        self.assertNotContains(response, "250,00")
         self.assertNotContains(response, "P-HIDDEN")
 
     def test_selecting_terminated_status_creates_visible_termination_record(self):
