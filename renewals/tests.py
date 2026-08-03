@@ -365,6 +365,161 @@ class ImportServiceTests(TestCase):
         self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 0))
         termination = Termination.objects.get()
         self.assertEqual(termination.date.isoformat(), "2026-07-07")
+        self.assertEqual(termination.contract.end_date, date(2026, 7, 7))
+
+    def test_termination_reuses_active_contract_and_preserves_its_premium(self):
+        active_upload = excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
+                "NUM_QUITTANCE",
+            ],
+            [
+                "10/0167835931", "Affaire nouvelle", "LAFRID HAMID",
+                "30/07/2025", "30/07/2026", 850, "FICE", "58-007098",
+                "Q-LAFRID-ACTIF",
+            ],
+        ])
+        termination_upload = excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
+                "NUM_QUITTANCE",
+            ],
+            [
+                "10/0167835931", "Résiliation", "LAFRID HAMID",
+                "07/07/2026", "30/07/2026", "-77,15", "FICE",
+                "58-007098", "146711576",
+            ],
+        ])
+        import_contracts(active_upload, self.admin)
+
+        batch = import_contracts(termination_upload, self.admin)
+
+        self.assertEqual(
+            (batch.added_rows, batch.updated_rows, batch.rejected_rows),
+            (0, 1, 0),
+        )
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.receipt, "Q-LAFRID-ACTIF")
+        self.assertEqual(contract.total_premium, Decimal("850.00"))
+        self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
+        self.assertEqual(contract.end_date, date(2026, 7, 7))
+        self.assertEqual(contract.effective_date, date(2025, 7, 30))
+        self.assertEqual(contract.termination.date, date(2026, 7, 7))
+
+    def test_upcoming_reimport_does_not_recreate_terminated_contract(self):
+        def upcoming_upload():
+            return excel_upload([
+                [
+                    "cat", "numero_police", "assure", "date_debut",
+                    "date_fin", "marque", "immatriculation", "Renouvele",
+                ],
+                [
+                    "10", "0167835931", "LAFRID HAMID", "30/07/2025",
+                    "30/07/2026", "FICE", "58-007098", "non renouvele",
+                ],
+            ], filename="echeances_lafrid.xls")
+
+        termination_upload = excel_upload([
+            [
+                "CAT", "POLICE", "Nature Evenement", "CLIENT",
+                "DATE_EFFET", "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE",
+                "IMMATDEF", "NUM_QUITTANCE",
+            ],
+            [
+                "10", "0167835931", "Résiliation", "LAFRID HAMID",
+                "07/07/2026", "30/07/2026", "-77,15", "FICE",
+                "58-007098", "146711576",
+            ],
+        ])
+        import_contracts(upcoming_upload(), self.admin)
+
+        termination_batch = import_contracts(termination_upload, self.admin)
+        reimport_batch = import_contracts(upcoming_upload(), self.admin)
+
+        self.assertEqual(termination_batch.updated_rows, 1)
+        self.assertEqual(reimport_batch.updated_rows, 1)
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.policy_number, "10/0167835931")
+        self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
+        self.assertEqual(contract.end_date, date(2026, 7, 7))
+        self.assertEqual(contract.termination.date, date(2026, 7, 7))
+
+    def test_active_and_termination_rows_in_same_file_create_one_contract(self):
+        upload = excel_upload([
+            [
+                "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+                "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
+                "NUM_QUITTANCE",
+            ],
+            [
+                "8/KHRIBACH-001", "Affaire nouvelle", "KHRIBACH KHALID",
+                "01/09/2025", "01/09/2026", 1200, "DACIA", "123-A-4",
+                "Q-KHRIBACH-ACTIF",
+            ],
+            [
+                "8/KHRIBACH-001", "Résiliation", "KHRIBACH KHALID",
+                "15/07/2026", "01/09/2026", -125, "DACIA", "123-A-4",
+                "Q-KHRIBACH-RESIL",
+            ],
+            [
+                "8/KHRIBACH-001", "Ristourne", "KHRIBACH KHALID",
+                "16/07/2026", "01/09/2026", -25, "DACIA", "123-A-4",
+                "Q-KHRIBACH-RISTOURNE",
+            ],
+        ])
+
+        batch = import_contracts(upload, self.admin)
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 0))
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.receipt, "Q-KHRIBACH-ACTIF")
+        self.assertEqual(contract.total_premium, Decimal("1200.00"))
+        self.assertEqual(contract.end_date, date(2026, 7, 15))
+        self.assertEqual(contract.renewal_status, Contract.RenewalStatus.TERMINATED)
+        self.assertEqual(contract.termination.date, date(2026, 7, 15))
+
+    def test_later_termination_event_keeps_first_stop_without_duplicate(self):
+        headers = [
+            "POLICE", "Nature Evenement", "CLIENT", "DATE_EFFET",
+            "DATE_ECHEANCE", "PRIME_TOTAL", "MARQUE", "IMMATDEF",
+            "NUM_QUITTANCE",
+        ]
+        import_contracts(excel_upload([
+            headers,
+            [
+                "8/KHRIBACH-WEEKLY", "Affaire nouvelle", "KHRIBACH KHALID",
+                "01/09/2025", "01/09/2026", 1200, "DACIA", "123-A-4",
+                "Q-WEEKLY-ACTIVE",
+            ],
+        ]), self.admin)
+        import_contracts(excel_upload([
+            headers,
+            [
+                "8/KHRIBACH-WEEKLY", "Annulation", "KHRIBACH KHALID",
+                "15/07/2026", "01/09/2026", -125, "DACIA", "123-A-4",
+                "Q-WEEKLY-STOP-1",
+            ],
+        ]), self.admin)
+
+        batch = import_contracts(excel_upload([
+            headers,
+            [
+                "8/KHRIBACH-WEEKLY", "Ristourne", "KHRIBACH KHALID",
+                "20/07/2026", "01/09/2026", -25, "DACIA", "123-A-4",
+                "Q-WEEKLY-STOP-2",
+            ],
+        ]), self.admin)
+
+        self.assertEqual((batch.added_rows, batch.updated_rows), (0, 1))
+        self.assertEqual(Contract.objects.count(), 1)
+        contract = Contract.objects.get()
+        self.assertEqual(contract.end_date, date(2026, 7, 15))
+        self.assertEqual(contract.termination.date, date(2026, 7, 15))
 
     def test_bordereau_enriches_upcoming_contract_without_overwriting_due_date(self):
         import_contracts(self.upcoming_upload(), self.admin)
@@ -718,6 +873,174 @@ class ExpiryBoundaryMigrationTests(TransactionTestCase):
         self.assertEqual(
             ContractModel.objects.get(pk=manual.pk).end_date,
             date(2026, 8, 1),
+        )
+
+
+class TerminationConsolidationMigrationTests(TransactionTestCase):
+    migrate_from = ("renewals", "0012_normalize_expiry_boundaries")
+    migrate_to = ("renewals", "0013_consolidate_terminations")
+
+    def test_migration_merges_historical_duplicate_and_backfills_missing_record(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        ClientModel = old_apps.get_model("renewals", "Client")
+        ContractModel = old_apps.get_model("renewals", "Contract")
+        CallInteractionModel = old_apps.get_model("renewals", "CallInteraction")
+        TerminationModel = old_apps.get_model("renewals", "Termination")
+
+        lafrid = ClientModel.objects.create(name="LAFRID HAMID")
+        active = ContractModel.objects.create(
+            client=lafrid,
+            policy_number="10/0167835931",
+            receipt="Q-LAFRID-ACTIF",
+            brand="FICE",
+            registration="58-007098",
+            effective_date=date(2025, 7, 30),
+            end_date=date(2026, 7, 29),
+            total_premium=Decimal("850.00"),
+        )
+        snapshot = ContractModel.objects.create(
+            client=lafrid,
+            policy_number="10/0167835931",
+            receipt="",
+            brand="FICE",
+            registration="58-007098",
+            effective_date=date(2025, 7, 30),
+            end_date=date(2026, 7, 30),
+            total_premium=None,
+            from_upcoming_file=True,
+        )
+        cancellation = ContractModel.objects.create(
+            client=lafrid,
+            policy_number="10/0167835931",
+            receipt="146711576",
+            event="Résiliation",
+            brand="FICE",
+            registration="58-007098",
+            effective_date=date(2026, 7, 7),
+            end_date=date(2026, 7, 29),
+            total_premium=Decimal("-77.15"),
+            renewal_status="terminated",
+        )
+        termination = TerminationModel.objects.create(
+            contract=cancellation,
+            date=date(2026, 7, 7),
+            reason="Résiliation",
+        )
+        termination_pk = termination.pk
+        interaction = CallInteractionModel.objects.create(
+            contract=cancellation,
+            call_result="answered",
+            renewal_status="terminated",
+        )
+        hidden_client = ClientModel.objects.create(name="KHRIBACH KHALID")
+        hidden_active = ContractModel.objects.create(
+            client=hidden_client,
+            policy_number="8/KHRIBACH-001",
+            receipt="Q-KHRIBACH-ACTIF",
+            registration="123-A-4",
+            effective_date=date(2025, 8, 10),
+            end_date=date(2026, 8, 10),
+            total_premium=Decimal("1200.00"),
+        )
+        hidden = ContractModel.objects.create(
+            client=hidden_client,
+            policy_number="8/KHRIBACH-001",
+            receipt="Q-KHRIBACH",
+            registration="123-A-4",
+            end_date=date(2026, 8, 10),
+            renewal_status="terminated",
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        ContractModel = new_apps.get_model("renewals", "Contract")
+        CallInteractionModel = new_apps.get_model("renewals", "CallInteraction")
+        TerminationModel = new_apps.get_model("renewals", "Termination")
+
+        self.assertFalse(ContractModel.objects.filter(pk=cancellation.pk).exists())
+        self.assertFalse(ContractModel.objects.filter(pk=snapshot.pk).exists())
+        active = ContractModel.objects.get(pk=active.pk)
+        self.assertEqual(active.renewal_status, "terminated")
+        self.assertEqual(active.end_date, date(2026, 7, 7))
+        self.assertEqual(active.total_premium, Decimal("850.00"))
+        termination = TerminationModel.objects.get(contract_id=active.pk)
+        self.assertEqual(termination.pk, termination_pk)
+        self.assertEqual(termination.date, date(2026, 7, 7))
+        interaction = CallInteractionModel.objects.get(pk=interaction.pk)
+        self.assertEqual(interaction.contract_id, active.pk)
+        self.assertFalse(ContractModel.objects.filter(pk=hidden.pk).exists())
+        hidden_active = ContractModel.objects.get(pk=hidden_active.pk)
+        self.assertEqual(hidden_active.renewal_status, "terminated")
+        self.assertEqual(hidden_active.end_date, date(2026, 8, 10))
+        self.assertEqual(hidden_active.total_premium, Decimal("1200.00"))
+        hidden_termination = TerminationModel.objects.get(
+            contract_id=hidden_active.pk
+        )
+        self.assertEqual(hidden_termination.date, date(2026, 8, 10))
+
+    def test_migration_does_not_delete_legitimate_successor_contract(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        ClientModel = old_apps.get_model("renewals", "Client")
+        ContractModel = old_apps.get_model("renewals", "Contract")
+        TerminationModel = old_apps.get_model("renewals", "Termination")
+
+        client = ClientModel.objects.create(name="CLIENT AVEC SUCCESSEUR")
+        active = ContractModel.objects.create(
+            client=client,
+            policy_number="8/SUCCESSOR-001",
+            receipt="Q-OLD-ACTIVE",
+            registration="500-A-1",
+            effective_date=date(2025, 7, 30),
+            end_date=date(2026, 7, 29),
+            total_premium=Decimal("850.00"),
+        )
+        cancellation = ContractModel.objects.create(
+            client=client,
+            policy_number="8/SUCCESSOR-001",
+            receipt="Q-OLD-STOP",
+            event="Résiliation",
+            registration="500-A-1",
+            effective_date=date(2026, 7, 7),
+            end_date=date(2026, 7, 29),
+            total_premium=Decimal("-75.00"),
+            renewal_status="terminated",
+        )
+        TerminationModel.objects.create(
+            contract=cancellation,
+            date=date(2026, 7, 7),
+            reason="Résiliation",
+        )
+        successor = ContractModel.objects.create(
+            client=client,
+            policy_number="8/SUCCESSOR-001",
+            receipt="Q-NEW-ACTIVE",
+            registration="500-A-1",
+            effective_date=date(2026, 7, 7),
+            end_date=date(2027, 7, 6),
+            total_premium=Decimal("950.00"),
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        ContractModel = new_apps.get_model("renewals", "Contract")
+        TerminationModel = new_apps.get_model("renewals", "Termination")
+
+        self.assertFalse(ContractModel.objects.filter(pk=cancellation.pk).exists())
+        active = ContractModel.objects.get(pk=active.pk)
+        self.assertEqual(active.renewal_status, "terminated")
+        self.assertEqual(active.end_date, date(2026, 7, 7))
+        self.assertTrue(TerminationModel.objects.filter(contract_id=active.pk).exists())
+        successor = ContractModel.objects.get(pk=successor.pk)
+        self.assertEqual(successor.renewal_status, "to_contact")
+        self.assertEqual(successor.end_date, date(2027, 7, 6))
+        self.assertFalse(
+            TerminationModel.objects.filter(contract_id=successor.pk).exists()
         )
 
 
@@ -1320,6 +1643,56 @@ class ApplicationFlowTests(TestCase):
         self.assertEqual({item.client_terminated_count for item in visible}, {2})
         self.assertContains(response, "2 contrats", count=2)
         self.assertNotContains(response, "P-HIDDEN")
+
+    def test_selecting_terminated_status_creates_visible_termination_record(self):
+        self.contract.end_date = timezone.localdate() - timedelta(days=5)
+        self.contract.save(update_fields=["end_date", "updated_at"])
+        response = self.client.post(
+            reverse("contract_detail", args=[self.contract.pk]),
+            {
+                "channel": CallInteraction.Channel.PHONE,
+                "call_result": CallInteraction.Result.ANSWERED,
+                "renewal_status": Contract.RenewalStatus.TERMINATED,
+                "comment": "Résiliation confirmée par le client",
+                "next_follow_up": "",
+            },
+        )
+
+        self.assertRedirects(
+            response,
+            reverse("contract_detail", args=[self.contract.pk]),
+        )
+        self.contract.refresh_from_db()
+        self.assertEqual(
+            self.contract.renewal_status,
+            Contract.RenewalStatus.TERMINATED,
+        )
+        self.assertEqual(self.contract.end_date, timezone.localdate())
+        termination = Termination.objects.get(contract=self.contract)
+        self.assertEqual(termination.date, timezone.localdate())
+        terminated_page = self.client.get(reverse("terminated_list"))
+        self.assertContains(terminated_page, self.contract.policy_number)
+
+        reopen_response = self.client.post(
+            reverse("contract_detail", args=[self.contract.pk]),
+            {
+                "channel": CallInteraction.Channel.PHONE,
+                "call_result": CallInteraction.Result.ANSWERED,
+                "renewal_status": Contract.RenewalStatus.TO_CONTACT,
+                "comment": "Tentative de réouverture",
+                "next_follow_up": "",
+            },
+        )
+        self.assertRedirects(
+            reopen_response,
+            reverse("contract_detail", args=[self.contract.pk]),
+        )
+        self.contract.refresh_from_db()
+        self.assertEqual(
+            self.contract.renewal_status,
+            Contract.RenewalStatus.TERMINATED,
+        )
+        self.assertTrue(Termination.objects.filter(contract=self.contract).exists())
 
     def test_terminated_contracts_are_excluded_from_upcoming_and_renewal_lists(self):
         status_client = Client.objects.create(name="Résilié par statut", phone="0600000001")

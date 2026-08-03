@@ -101,6 +101,16 @@ def normalized_identity(value):
     return normalize(value).replace(" ", "")
 
 
+def is_termination_event(value):
+    """Indique si une ligne représente un événement qui arrête le contrat."""
+    event = normalize(value)
+    return bool(event) and any(
+        normalize(token) in event
+        for token in settings.TERMINATION_EVENTS
+        if normalize(token)
+    )
+
+
 def detect_import_type(mapping):
     fields = set(mapping)
     if PROVISIONAL_SIGNATURE_FIELDS <= fields:
@@ -563,6 +573,214 @@ def dates_match(left, right, tolerance_days=1):
     return bool(left and right and abs((left - right).days) <= tolerance_days)
 
 
+def same_contract_subject(item, contract):
+    """Rapproche une résiliation sans dépendre de sa quittance/date d'effet."""
+    if canonical_policy(
+        item["policy"],
+        item["values"]["category"],
+    ) != canonical_policy(contract.policy_number, contract.category):
+        return False
+
+    incoming_external_id = normalized_identity(item["external_id"])
+    stored_external_id = normalized_identity(contract.client.external_id)
+    if incoming_external_id and stored_external_id:
+        if incoming_external_id != stored_external_id:
+            return False
+    elif normalized_identity(item["name"]) != normalized_identity(
+        contract.client.name
+    ):
+        return False
+
+    incoming_vehicle = normalized_identity(item["values"]["registration"])
+    stored_vehicle = normalized_identity(contract.registration)
+    if incoming_vehicle and stored_vehicle and incoming_vehicle != stored_vehicle:
+        return False
+    return True
+
+
+def select_termination_candidate(item, contracts):
+    """Trouve le contrat actif visé par une ligne de résiliation."""
+    cancellation_date = item["termination_date"]
+    source_end_date = item["source_end_date"]
+    candidates = []
+    for contract in contracts:
+        if not same_contract_subject(item, contract):
+            continue
+        already_closed = (
+            contract.manually_terminated
+            or contract.renewal_status == Contract.RenewalStatus.TERMINATED
+            or hasattr(contract, "termination")
+        )
+        exact_expiry = dates_match(contract.end_date, source_end_date)
+        same_recorded_stop = bool(
+            hasattr(contract, "termination")
+            and contract.termination.date == cancellation_date
+        )
+        same_closed_cycle = bool(
+            already_closed
+            and source_end_date
+            and contract.end_date <= source_end_date + timedelta(days=1)
+            and (
+                not contract.effective_date
+                or contract.effective_date <= contract.end_date
+            )
+        )
+        cancellation_in_period = bool(
+            cancellation_date
+            and cancellation_date <= contract.end_date + timedelta(days=1)
+            and (
+                not contract.effective_date
+                or cancellation_date >= contract.effective_date
+            )
+        )
+        if not exact_expiry and not cancellation_in_period and not same_closed_cycle:
+            continue
+        if (
+            not same_recorded_stop
+            and not exact_expiry
+            and not same_closed_cycle
+            and contract.effective_date
+            and contract.effective_date >= cancellation_date
+        ):
+            # Un contrat qui commence au moment de l'arrêt peut être son
+            # successeur légitime ; il ne faut pas le résilier par erreur.
+            continue
+        expiry_distance = (
+            abs((contract.end_date - source_end_date).days)
+            if source_end_date
+            else 10**9
+        )
+        candidates.append(
+            (
+                not same_recorded_stop,
+                not exact_expiry,
+                not same_closed_cycle,
+                already_closed,
+                expiry_distance,
+                contract.policy_number != item["policy"],
+                contract.pk,
+                contract,
+            )
+        )
+    return min(candidates, default=(None,) * 8)[-1]
+
+
+def indexed_policy_candidates(index, *aliases):
+    candidates = {}
+    for alias in aliases:
+        for contract in index.get(alias, ()):
+            candidates[contract.pk] = contract
+    return list(candidates.values())
+
+
+def select_closed_cycle_candidate(item, contracts):
+    """Évite qu'un réimport d'échéances recrée un contrat déjà résilié."""
+    incoming_start = item["values"]["effective_date"]
+    incoming_end = item["source_end_date"]
+    if not incoming_end:
+        return None
+    candidates = []
+    for contract in contracts:
+        already_closed = (
+            contract.manually_terminated
+            or contract.renewal_status == Contract.RenewalStatus.TERMINATED
+            or hasattr(contract, "termination")
+        )
+        if not already_closed or not same_contract_subject(item, contract):
+            continue
+        stopped_on = contract.end_date
+        if incoming_start and stopped_on < incoming_start:
+            continue
+        if stopped_on > incoming_end + timedelta(days=1):
+            continue
+        candidates.append((stopped_on, contract.pk, contract))
+    return min(candidates, default=(None,) * 3)[-1]
+
+
+def same_import_subject(left, right):
+    if canonical_policy(
+        left["policy"],
+        left["values"]["category"],
+    ) != canonical_policy(
+        right["policy"],
+        right["values"]["category"],
+    ):
+        return False
+    if normalized_identity(left["name"]) != normalized_identity(right["name"]):
+        return False
+    left_vehicle = normalized_identity(left["values"]["registration"])
+    right_vehicle = normalized_identity(right["values"]["registration"])
+    if left_vehicle and right_vehicle and left_vehicle != right_vehicle:
+        return False
+    return dates_match(left["source_end_date"], right["source_end_date"])
+
+
+def combine_batch_termination_rows(items):
+    """Fusionne production + résiliation du même contrat dans un seul objet."""
+    regular = [item for item in items if not item["is_termination"]]
+    terminations = [item for item in items if item["is_termination"]]
+    consumed_lines = set()
+    combined = []
+
+    termination_groups = []
+    grouped_lines = set()
+    for termination_item in terminations:
+        if termination_item["line"] in grouped_lines:
+            continue
+        group = [
+            item
+            for item in terminations
+            if item["line"] not in grouped_lines
+            and same_import_subject(termination_item, item)
+        ]
+        grouped_lines.update(item["line"] for item in group)
+        termination_groups.append(group)
+
+    for termination_group in termination_groups:
+        termination_item = min(
+            termination_group,
+            key=lambda item: (item["termination_date"], item["line"]),
+        )
+        candidates = [
+            item
+            for item in regular
+            if item["line"] not in consumed_lines
+            and same_import_subject(termination_item, item)
+        ]
+        if not candidates:
+            combined.append(termination_item)
+            continue
+        base = max(
+            candidates,
+            key=lambda item: (
+                premium_rank(item["values"]["total_premium"]),
+                bool(item["receipt"]),
+                -item["line"],
+            ),
+        )
+        consumed_lines.add(base["line"])
+        merged = dict(base)
+        merged_values = dict(base["values"])
+        for field, value in termination_item["values"].items():
+            if field == "event" or merged_values.get(field) in (None, ""):
+                merged_values[field] = value
+        merged.update({
+            "line": termination_item["line"],
+            "is_termination": True,
+            "termination_date": termination_item["termination_date"],
+            "termination_reason": termination_item["termination_reason"],
+            "source_end_date": termination_item["source_end_date"],
+            "renewed": False,
+            "values": merged_values,
+        })
+        combined.append(merged)
+
+    combined.extend(
+        item for item in regular if item["line"] not in consumed_lines
+    )
+    return sorted(combined, key=lambda item: item["line"])
+
+
 def select_contract_candidate(item, contracts, claimed_ids):
     candidates = [
         contract
@@ -619,6 +837,51 @@ def merge_contract_values(contract, item, client):
     if item["import_type"] == ImportBatch.ImportType.UPCOMING:
         contract.policy_number = item["policy"]
         contract.from_upcoming_file = True
+
+
+def merge_termination_values(contract, item, client):
+    """Clôture le contrat existant sans remplacer ses données de production."""
+    incoming = item["values"]
+    contract.client = client
+    fill_if_empty = (
+        "category",
+        "agent_reference",
+        "agent_code",
+        "pack_code",
+        "brand",
+        "registration",
+        "net_premium",
+        "cash_premium",
+        "total_premium",
+        "net_payable",
+        "effective_date",
+        "issue_date",
+    )
+    for field in fill_if_empty:
+        value = incoming.get(field)
+        if getattr(contract, field) in (None, "") and value not in (None, ""):
+            setattr(contract, field, value)
+    contract.event = item["termination_reason"]
+    contract.end_date = item["termination_date"]
+    if not contract.receipt and item["receipt"]:
+        contract.receipt = item["receipt"]
+
+
+def merge_closed_cycle_values(contract, item, client):
+    """Enrichit un contrat clôturé sans le rouvrir ni changer son arrêt."""
+    incoming = item["values"]
+    contract.client = client
+    for field in (
+        "category",
+        "agent_reference",
+        "agent_code",
+        "pack_code",
+        "brand",
+        "registration",
+    ):
+        value = incoming.get(field)
+        if getattr(contract, field) in (None, "") and value not in (None, ""):
+            setattr(contract, field, value)
 
 
 def mark_vehicle_renewals():
@@ -797,6 +1060,12 @@ def import_contract_rows(rows, filename, user):
                     "provisional_allowed_count": allowed_count,
                     "provisional_status": provisional_status,
                 })
+            termination_event = is_termination_event(values["event"])
+            termination_date = (
+                values["effective_date"]
+                or values["issue_date"]
+                or values["end_date"]
+            )
             parsed.append({
                 "line": line_number,
                 "key": (policy, receipt),
@@ -808,6 +1077,10 @@ def import_contract_rows(rows, filename, user):
                 "phone": clean_text(row_value(row, mapping, "client_phone")),
                 "import_type": import_type,
                 "renewed": indicates_renewed(row_value(row, mapping, "renewed_flag")),
+                "is_termination": termination_event,
+                "termination_date": termination_date,
+                "termination_reason": values["event"],
+                "source_end_date": values["end_date"],
                 "values": values,
             })
         except Exception as exc:
@@ -826,19 +1099,26 @@ def import_contract_rows(rows, filename, user):
             business_groups.setdefault(identity, []).append(item)
 
     for group in business_groups.values():
+        termination_items = [item for item in group if item["is_termination"]]
+        regular_items = [item for item in group if not item["is_termination"]]
+        # Une résiliation est un événement de clôture, pas un doublon financier.
+        # Sa prime est souvent négative et ne doit jamais la faire rejeter.
+        retained_by_premium.extend(termination_items)
+        if not regular_items:
+            continue
         highest_premium = max(
             premium_rank(item["values"]["total_premium"])
-            for item in group
+            for item in regular_items
         )
         highest_items = [
             item
-            for item in group
+            for item in regular_items
             if premium_rank(item["values"]["total_premium"])
             == highest_premium
         ]
         winner_line = min(item["line"] for item in highest_items)
         retained_by_premium.extend(highest_items)
-        for item in group:
+        for item in regular_items:
             if item in highest_items:
                 continue
             record_error(
@@ -864,21 +1144,24 @@ def import_contract_rows(rows, filename, user):
                 ValueError(f"doublon ignoré : même contrat que la ligne {duplicate_line}"),
             )
             continue
-        duplicate_key_line = seen_keys.get(item["key"])
-        if duplicate_key_line is not None:
+        duplicate_key_item = seen_keys.get(item["key"])
+        if (
+            duplicate_key_item is not None
+            and duplicate_key_item["is_termination"] == item["is_termination"]
+        ):
             record_error(
                 batch,
                 item["line"],
                 ValueError(
                     "doublon ignoré : même police et même quittance "
-                    f"que la ligne {duplicate_key_line}"
+                    f"que la ligne {duplicate_key_item['line']}"
                 ),
             )
             continue
         seen_fingerprints[fingerprint] = item["line"]
-        seen_keys[item["key"]] = item["line"]
+        seen_keys.setdefault(item["key"], item)
         unique_parsed.append(item)
-    parsed = unique_parsed
+    parsed = combine_batch_termination_rows(unique_parsed)
 
     if not parsed:
         return save_batch(batch)
@@ -888,11 +1171,24 @@ def import_contract_rows(rows, filename, user):
             policies = {
                 policy
                 for item in parsed
-                for policy in (item["policy"], item["legacy_policy"])
+                for policy in (
+                    item["policy"],
+                    item["legacy_policy"],
+                    canonical_policy(
+                        item["policy"],
+                        item["values"]["category"],
+                    ),
+                    canonical_policy(
+                        item["legacy_policy"],
+                        item["values"]["category"],
+                    ),
+                )
                 if policy
             }
             existing_contract_list = list(
-                Contract.objects.select_related("client").filter(policy_number__in=policies)
+                Contract.objects.select_related("client", "termination").filter(
+                    policy_number__in=policies
+                )
             )
             existing_contracts = {
                 (contract.policy_number, contract.receipt): contract
@@ -935,6 +1231,48 @@ def import_contract_rows(rows, filename, user):
                 business_contract = existing_business_contracts.get(
                     item_business_identity(item)
                 )
+                policy_alias = canonical_policy(
+                    item["policy"],
+                    item["values"]["category"],
+                )
+                policy_candidates = indexed_policy_candidates(
+                    contracts_by_policy,
+                    item["policy"],
+                    item["legacy_policy"],
+                    policy_alias,
+                )
+                if item["is_termination"]:
+                    termination_candidate = select_termination_candidate(
+                        item,
+                        policy_candidates,
+                    )
+                    if termination_candidate is not None:
+                        item["matched_contract_id"] = termination_candidate.pk
+                        if (
+                            hasattr(termination_candidate, "termination")
+                            and termination_candidate.termination.date
+                            < item["termination_date"]
+                        ):
+                            item["termination_date"] = (
+                                termination_candidate.termination.date
+                            )
+                            item["termination_reason"] = (
+                                termination_candidate.termination.reason
+                                or item["termination_reason"]
+                            )
+                    # Une résiliation doit être appliquée même si sa prime est
+                    # négative ou inférieure à celle du contrat en cours.
+                    filtered_parsed.append(item)
+                    continue
+                closed_cycle = select_closed_cycle_candidate(
+                    item,
+                    policy_candidates,
+                )
+                if closed_cycle is not None:
+                    item["matched_contract_id"] = closed_cycle.pk
+                    item["preserve_closed_cycle"] = True
+                    filtered_parsed.append(item)
+                    continue
                 if business_contract is not None:
                     if item["import_type"] == ImportBatch.ImportType.UPCOMING:
                         # Le fichier d'échéances ne contient pas de prime : il
@@ -1060,7 +1398,6 @@ def import_contract_rows(rows, filename, user):
             for item in parsed:
                 final_records[item["key"]] = item
 
-            termination_tokens = [normalize(value) for value in settings.TERMINATION_EVENTS]
             new_contracts = []
             changed_contracts = []
             terminated_contracts = []
@@ -1076,12 +1413,24 @@ def import_contract_rows(rows, filename, user):
                     item.get("matched_contract_id")
                 ) or existing_contracts.get(key)
                 if contract is None:
+                    policy_alias = canonical_policy(
+                        item["policy"],
+                        item["values"]["category"],
+                    )
                     contract = select_contract_candidate(
                         item,
-                        contracts_by_policy.get(item["policy"], ()),
+                        indexed_policy_candidates(
+                            contracts_by_policy,
+                            item["policy"],
+                            item["legacy_policy"],
+                            policy_alias,
+                        ),
                         claimed_ids,
                     )
                 if contract is None:
+                    contract_values = dict(item["values"])
+                    if item["is_termination"]:
+                        contract_values["end_date"] = item["termination_date"]
                     contract = Contract(
                         client=clients_by_identity[identity],
                         policy_number=item["policy"],
@@ -1089,30 +1438,69 @@ def import_contract_rows(rows, filename, user):
                         from_upcoming_file=(
                             item["import_type"] == ImportBatch.ImportType.UPCOMING
                         ),
-                        **item["values"],
+                        **contract_values,
                     )
                     new_contracts.append(contract)
                     batch.added_rows += 1
                 else:
                     claimed_ids.add(contract.pk)
-                    merge_contract_values(
-                        contract,
-                        item,
-                        clients_by_identity[identity],
-                    )
+                    if item.get("preserve_closed_cycle"):
+                        merge_closed_cycle_values(
+                            contract,
+                            item,
+                            clients_by_identity[identity],
+                        )
+                    elif item["is_termination"]:
+                        merge_termination_values(
+                            contract,
+                            item,
+                            clients_by_identity[identity],
+                        )
+                    else:
+                        merge_contract_values(
+                            contract,
+                            item,
+                            clients_by_identity[identity],
+                        )
                     contract.updated_at = now
                     changed_contracts.append(contract)
                     batch.updated_rows += 1
-                event_norm = normalize(item["values"]["event"])
-                if any(token in event_norm for token in termination_tokens):
+                if item["is_termination"]:
                     contract.renewal_status = Contract.RenewalStatus.TERMINATED
-                    terminated_contracts.append(contract)
+                    contract.renewed_contract = None
+                    terminated_contracts.append((contract, item))
+                elif item.get("preserve_closed_cycle"):
+                    pass
                 elif item["renewed"] and not contract.manually_terminated:
                     contract.renewal_status = Contract.RenewalStatus.RENEWED
 
             if new_contracts:
                 Contract.objects.bulk_create(new_contracts, batch_size=500)
+
+            termination_by_contract = {}
+            for contract, item in terminated_contracts:
+                current = termination_by_contract.get(contract.pk)
+                if current is None or (
+                    item["termination_date"],
+                    item["line"],
+                ) < (
+                    current[1]["termination_date"],
+                    current[1]["line"],
+                ):
+                    termination_by_contract[contract.pk] = (contract, item)
+            terminated_contracts = list(termination_by_contract.values())
+            for contract, item in terminated_contracts:
+                contract.end_date = item["termination_date"]
+                contract.event = item["termination_reason"]
+                contract.renewal_status = Contract.RenewalStatus.TERMINATED
+                contract.renewed_contract = None
+                contract.updated_at = now
+                changed_contracts.append(contract)
+
             if changed_contracts:
+                changed_contracts = list({
+                    contract.pk: contract for contract in changed_contracts
+                }.values())
                 Contract.objects.bulk_update(
                     changed_contracts,
                     [
@@ -1122,40 +1510,40 @@ def import_contract_rows(rows, filename, user):
                         *CONTRACT_VALUE_FIELDS,
                         "from_upcoming_file",
                         "renewal_status",
+                        "renewed_contract",
                         "updated_at",
                     ],
                     batch_size=500,
                 )
 
-            terminated_ids = [contract.pk for contract in terminated_contracts]
+            terminated_ids = [
+                contract.pk for contract, _item in terminated_contracts
+            ]
             existing_terminations = {
                 termination.contract_id: termination
                 for termination in Termination.objects.filter(contract_id__in=terminated_ids)
             }
             new_terminations = []
             changed_terminations = []
-            for contract in terminated_contracts:
-                termination_date = (
-                    contract.effective_date
-                    or contract.issue_date
-                    or timezone.localdate()
-                )
+            for contract, item in terminated_contracts:
+                termination_date = item["termination_date"]
+                termination_reason = item["termination_reason"]
                 termination = existing_terminations.get(contract.pk)
                 if termination is None:
                     new_terminations.append(
                         Termination(
                             contract=contract,
                             date=termination_date,
-                            reason=contract.event,
+                            reason=termination_reason,
                             recorded_by=user,
                         )
                     )
                 elif (
                     termination.date != termination_date
-                    or termination.reason != contract.event
+                    or termination.reason != termination_reason
                 ):
                     termination.date = termination_date
-                    termination.reason = contract.event
+                    termination.reason = termination_reason
                     changed_terminations.append(termination)
             Termination.objects.bulk_create(new_terminations, batch_size=500)
             if changed_terminations:

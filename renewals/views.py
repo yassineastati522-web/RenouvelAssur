@@ -182,8 +182,38 @@ def contract_detail(request, pk):
         )
         return redirect("contract_detail", pk=contract.pk)
     if request.method == "POST" and not is_plan_post and form.is_valid():
+        selected_status = form.cleaned_data["renewal_status"]
+        already_terminated = (
+            contract.is_terminated
+            or Termination.objects.filter(contract=contract).exists()
+        )
+        if (
+            already_terminated
+            and selected_status != Contract.RenewalStatus.TERMINATED
+        ):
+            messages.error(
+                request,
+                "Un contrat résilié ne peut pas être rouvert depuis la fiche "
+                "d’appel. Contactez un administrateur pour corriger ses données.",
+            )
+            return redirect("contract_detail", pk=contract.pk)
         interaction = form.save(commit=False); interaction.contract = contract; interaction.employee = request.user; interaction.save()
-        contract.renewal_status = interaction.renewal_status; contract.save(update_fields=["renewal_status", "updated_at"])
+        contract.renewal_status = interaction.renewal_status
+        update_fields = ["renewal_status", "updated_at"]
+        if interaction.renewal_status == Contract.RenewalStatus.TERMINATED:
+            cancellation_date = timezone.localdate()
+            contract.end_date = cancellation_date
+            update_fields.append("end_date")
+            Termination.objects.update_or_create(
+                contract=contract,
+                defaults={
+                    "date": cancellation_date,
+                    "reason": interaction.comment.strip()
+                    or "Résiliation enregistrée lors d’un appel",
+                    "recorded_by": request.user,
+                },
+            )
+        contract.save(update_fields=update_fields)
         messages.success(request, "Interaction enregistrée dans l’historique.")
         missed = {CallInteraction.Result.VOICEMAIL, CallInteraction.Result.UNREACHABLE, CallInteraction.Result.OFF}
         missed_days = contract.interactions.filter(call_result__in=missed).dates("occurred_at", "day").count()
