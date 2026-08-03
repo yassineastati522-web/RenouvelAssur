@@ -31,7 +31,7 @@
       <dt>Téléphone</dt><dd><a href="tel:{{ contract.client.phone }}">{{ contract.client.phone|default:"À renseigner" }}</a></dd>
       <dt>Marque</dt><dd>{{ contract.brand|default:"—" }}</dd>
       <dt>Immatriculation</dt><dd>{{ contract.registration|default:"—" }}</dd>
-      <dt>{% if contract.is_terminated %}NET_A_PAYE de résiliation{% else %}Prime TTC{% endif %}</dt>
+      <dt>{% if contract.is_terminated %}Prime de résiliation{% else %}Prime TTC{% endif %}</dt>
       <dd>
         {% with amount=contract.display_amount %}
           {% if amount != None %}{{ amount|floatformat:2 }} MAD{% else %}—{% endif %}

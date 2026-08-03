@@ -562,7 +562,7 @@ def premium_rank(value):
     return value if value is not None else Decimal("-Infinity")
 
 
-def negative_amount(value):
+def negative_premium(value):
     if value in (None, 0):
         return None
     return -abs(value)
@@ -587,21 +587,27 @@ def same_contract_subject(item, contract):
     ) != canonical_policy(contract.policy_number, contract.category):
         return False
 
-    incoming_external_id = normalized_identity(item["external_id"])
-    stored_external_id = normalized_identity(contract.client.external_id)
-    if incoming_external_id and stored_external_id:
-        if incoming_external_id != stored_external_id:
-            return False
-    elif normalized_identity(item["name"]) != normalized_identity(
-        contract.client.name
-    ):
-        return False
-
     incoming_vehicle = normalized_identity(item["values"]["registration"])
     stored_vehicle = normalized_identity(contract.registration)
     if incoming_vehicle and stored_vehicle and incoming_vehicle != stored_vehicle:
         return False
-    return True
+
+    incoming_external_id = normalized_identity(item["external_id"])
+    stored_external_id = normalized_identity(contract.client.external_id)
+    external_id_matches = bool(
+        incoming_external_id
+        and stored_external_id
+        and incoming_external_id == stored_external_id
+    )
+    name_matches = normalized_identity(item["name"]) == normalized_identity(
+        contract.client.name
+    )
+
+    # La police est déjà identique. Une faute de CIN dans un export ne doit
+    # donc pas créer un second contrat lorsque le nom confirme clairement
+    # qu'il s'agit du même assuré. Le véhicule seul ne suffit pas : il peut
+    # avoir été vendu ou transféré à un autre client.
+    return external_id_matches or name_matches
 
 
 def select_termination_candidate(item, contracts):
@@ -775,9 +781,7 @@ def combine_batch_termination_rows(items):
             "is_termination": True,
             "termination_date": termination_item["termination_date"],
             "termination_reason": termination_item["termination_reason"],
-            "termination_net_payable": termination_item[
-                "termination_net_payable"
-            ],
+            "termination_premium": termination_item["termination_premium"],
             "source_end_date": termination_item["source_end_date"],
             "renewed": False,
             "values": merged_values,
@@ -1089,8 +1093,8 @@ def import_contract_rows(rows, filename, user):
                 "is_termination": termination_event,
                 "termination_date": termination_date,
                 "termination_reason": values["event"],
-                "termination_net_payable": (
-                    negative_amount(values["net_payable"])
+                "termination_premium": (
+                    negative_premium(values["total_premium"])
                     if termination_event
                     else None
                 ),
@@ -1276,9 +1280,9 @@ def import_contract_rows(rows, filename, user):
                             )
                             # Le montant doit rester lié à la première
                             # date d'arrêt. Une ristourne plus tardive ne doit
-                            # pas devenir le NET_A_PAYE de la résiliation initiale.
-                            item["termination_net_payable"] = (
-                                termination_candidate.termination.net_payable
+                            # pas devenir la prime de la résiliation initiale.
+                            item["termination_premium"] = (
+                                termination_candidate.termination.premium
                             )
                     # Une résiliation doit être appliquée même si son montant est
                     # négatif ou inférieur à celui du contrat en cours.
@@ -1548,7 +1552,7 @@ def import_contract_rows(rows, filename, user):
             for contract, item in terminated_contracts:
                 termination_date = item["termination_date"]
                 termination_reason = item["termination_reason"]
-                termination_net_payable = item["termination_net_payable"]
+                termination_premium = item["termination_premium"]
                 termination = existing_terminations.get(contract.pk)
                 if termination is None:
                     new_terminations.append(
@@ -1556,7 +1560,7 @@ def import_contract_rows(rows, filename, user):
                             contract=contract,
                             date=termination_date,
                             reason=termination_reason,
-                            net_payable=termination_net_payable,
+                            premium=termination_premium,
                             recorded_by=user,
                         )
                     )
@@ -1569,11 +1573,10 @@ def import_contract_rows(rows, filename, user):
                         termination.reason = termination_reason
                         changed = True
                     if (
-                        termination_net_payable is not None
-                        and termination.net_payable
-                        != termination_net_payable
+                        termination_premium is not None
+                        and termination.premium != termination_premium
                     ):
-                        termination.net_payable = termination_net_payable
+                        termination.premium = termination_premium
                         changed = True
                     if changed:
                         changed_terminations.append(termination)
@@ -1581,7 +1584,7 @@ def import_contract_rows(rows, filename, user):
             if changed_terminations:
                 Termination.objects.bulk_update(
                     changed_terminations,
-                    ["date", "reason", "net_payable"],
+                    ["date", "reason", "premium"],
                     batch_size=500,
                 )
             mark_vehicle_renewals()

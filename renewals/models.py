@@ -152,14 +152,14 @@ class Contract(models.Model):
         )
     @property
     def display_amount(self):
-        """Affiche la prime TTC active ou le NET_A_PAYE de résiliation."""
+        """Affiche la prime TTC active ou la prime négative de résiliation."""
         if not self.is_terminated:
             return self.total_premium
         termination = getattr(self, "termination", None)
         if termination is not None:
-            return termination.display_net_payable
-        if self.net_payable is not None and self.net_payable < 0:
-            return self.net_payable
+            return termination.display_premium
+        if self.total_premium is not None and self.total_premium < 0:
+            return self.total_premium
         return None
     @property
     def priority(self):
@@ -239,8 +239,16 @@ class Termination(models.Model):
     contract = models.OneToOneField(Contract, related_name="termination", on_delete=models.CASCADE)
     date = models.DateField(default=timezone.localdate)
     reason = models.CharField(max_length=255, blank=True)
-    net_payable = models.DecimalField(
-        "net à payer de la résiliation",
+    legacy_net_payable = models.DecimalField(
+        "ancienne valeur NET_A_PAYE (audit)",
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    premium = models.DecimalField(
+        "prime de résiliation",
         max_digits=14,
         decimal_places=2,
         null=True,
@@ -253,24 +261,31 @@ class Termination(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=(
-                    models.Q(net_payable__isnull=True)
-                    | models.Q(net_payable__lt=0)
+                    models.Q(legacy_net_payable__isnull=True)
+                    | models.Q(legacy_net_payable__lt=0)
                 ),
-                name="termination_net_payable_negative_or_null",
+                name="termination_legacy_net_negative_or_null",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(premium__isnull=True)
+                    | models.Q(premium__lt=0)
+                ),
+                name="termination_premium_negative_or_null",
             ),
         ]
 
     @property
-    def display_net_payable(self):
-        """Retourne toujours le NET_A_PAYE négatif de la résiliation.
+    def display_premium(self):
+        """Retourne toujours la PRIME_TOTAL négative de la résiliation.
 
-        Une ancienne ligne de résiliation peut encore porter ce montant sur le
-        contrat lui-même. Un NET_A_PAYE positif du contrat actif ne doit jamais
-        être présenté comme le montant de sa résiliation.
+        Une ligne de résiliation isolée peut encore porter ce montant sur le
+        contrat lui-même. La prime positive du contrat actif ne doit jamais
+        être présentée comme la prime perdue de sa résiliation.
         """
-        value = self.net_payable
+        value = self.premium
         if value is None:
-            value = self.contract.net_payable
+            value = self.contract.total_premium
             if value is None or value >= 0:
                 return None
         if value == 0:
