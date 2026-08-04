@@ -102,5 +102,16 @@
 {% else %}
   {% block anonymous %}{% endblock %}
 {% endif %}
+{% if session_expiry_iso %}
+<script>
+  (() => {
+    const expiresAt = Date.parse("{{ session_expiry_iso|escapejs }}");
+    const remaining = expiresAt - Date.now();
+    const leaveApplication = () => window.location.replace("{% url 'login' %}");
+    if (remaining <= 0) leaveApplication();
+    else window.setTimeout(leaveApplication, remaining);
+  })();
+</script>
+{% endif %}
 </body>
 </html>

@@ -1,5 +1,5 @@
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import patch
@@ -15,6 +15,7 @@ from django.utils import timezone
 from openpyxl import Workbook
 
 from .models import CallInteraction, Client, Contract, ImportBatch, Termination, User
+from .session_security import SESSION_DAY_KEY
 from .services import import_contracts
 
 
@@ -24,6 +25,59 @@ class HealthCheckTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class MidnightSessionSecurityTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("midnight-user", password="secret")
+
+    @patch("renewals.session_security.next_local_midnight")
+    @patch("renewals.session_security.current_local_day")
+    def test_login_expires_at_the_next_local_midnight(self, local_day, midnight):
+        local_day.return_value = date(2026, 8, 4)
+        midnight.return_value = timezone.make_aware(datetime(2026, 8, 5, 0, 0))
+
+        self.assertTrue(self.client.login(username="midnight-user", password="secret"))
+
+        session = self.client.session
+        self.assertEqual(session[SESSION_DAY_KEY], "2026-08-04")
+        self.assertEqual(session.get_expiry_date(), midnight.return_value)
+
+    @patch("renewals.session_security.next_local_midnight")
+    @patch("renewals.session_security.current_local_day")
+    def test_authenticated_account_is_logged_out_after_midnight(self, local_day, midnight):
+        local_day.return_value = date(2026, 8, 4)
+        midnight.return_value = timezone.make_aware(datetime(2026, 8, 5, 0, 0))
+        self.assertTrue(self.client.login(username="midnight-user", password="secret"))
+
+        local_day.return_value = date(2026, 8, 5)
+        response = self.client.get(reverse("health_check"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @patch("renewals.session_security.next_local_midnight")
+    @patch("renewals.session_security.current_local_day")
+    def test_authenticated_page_schedules_browser_exit_at_expiry(self, local_day, midnight):
+        local_day.return_value = date(2026, 8, 4)
+        midnight.return_value = timezone.make_aware(datetime(2026, 8, 5, 0, 0))
+        self.assertTrue(self.client.login(username="midnight-user", password="secret"))
+
+        response = self.client.get(reverse("dashboard"))
+
+        self.assertContains(response, "const expiresAt = Date.parse")
+        self.assertContains(response, "window.setTimeout(leaveApplication, remaining)")
+
+    @patch("renewals.session_security.current_local_day", return_value=date(2026, 8, 4))
+    def test_session_created_before_deployment_is_logged_out_once(self, local_day):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session.pop(SESSION_DAY_KEY, None)
+        session.save()
+
+        self.client.get(reverse("health_check"))
+
+        self.assertNotIn("_auth_user_id", self.client.session)
 
 
 def excel_upload(rows, filename="contrats.xlsx", leading_sheet=None):
