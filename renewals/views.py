@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.db.models import Case, Count, DateField, F, OuterRef, Q, Subquery, Sum, When
+from django.db.models import Case, Count, DateField, F, OuterRef, Prefetch, Q, Subquery, Sum, When
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -16,15 +16,15 @@ from .forms import (
     InteractionForm,
     ProvisionalPlanForm,
 )
-from .models import CallInteraction, Client, Contract, ImportBatch, Termination
+from .models import (
+    CallInteraction,
+    Client,
+    Contract,
+    ImportBatch,
+    QUICK_CALL_RESULTS,
+    Termination,
+)
 from .services import import_contracts
-
-
-QUICK_CALL_RESULTS = [
-    (CallInteraction.Result.ANSWERED, "Client appelé"),
-    (CallInteraction.Result.VOICEMAIL, "Boîte vocale"),
-    (CallInteraction.Result.UNREACHABLE, "Non joignable"),
-]
 
 
 def scoped_contracts(user):
@@ -32,7 +32,11 @@ def scoped_contracts(user):
         "client",
         "assigned_agent",
         "termination",
-    ).prefetch_related("interactions")
+    ).prefetch_related(Prefetch(
+        "interactions",
+        queryset=CallInteraction.objects.order_by("-occurred_at", "-pk")[:1],
+        to_attr="_latest_interactions",
+    ))
     return qs if user.is_agency_admin else qs.filter(Q(assigned_agent=user) | Q(assigned_agent__isnull=True))
 
 
@@ -399,7 +403,13 @@ def client_detail(request, pk):
     if not allowed.exists() and not request.user.is_agency_admin: return HttpResponseForbidden()
     form = ClientForm(request.POST or None, instance=client)
     if request.method == "POST" and form.is_valid(): form.save(); messages.success(request, "Coordonnées mises à jour."); return redirect("client_detail", pk=pk)
-    interactions = CallInteraction.objects.filter(contract__in=allowed).select_related("contract", "employee")
+    interactions = paginate(
+        request,
+        CallInteraction.objects.filter(contract__in=allowed)
+        .select_related("contract", "employee")
+        .order_by("-occurred_at", "-pk"),
+        per_page=30,
+    )
     return render(request, "renewals/client_detail.html", {"client": client, "contracts": allowed, "interactions": interactions, "form": form})
 
 
@@ -450,13 +460,23 @@ def import_view(request):
                 except ValueError as exc:
                     active_form.add_error("file", str(exc))
                 else:
-                    messages.success(
-                        request,
-                        f"{batch.get_import_type_display()} importé : "
-                        f"{batch.added_rows} ajout(s), "
-                        f"{batch.updated_rows} mise(s) à jour, "
-                        f"{batch.rejected_rows} rejet(s).",
-                    )
+                    if any(
+                        error.get("code") == "internal_error"
+                        for error in batch.errors
+                    ):
+                        messages.error(
+                            request,
+                            "Import annulé à cause d’une erreur interne. "
+                            "Aucun contrat n’a été modifié.",
+                        )
+                    else:
+                        messages.success(
+                            request,
+                            f"{batch.get_import_type_display()} importé : "
+                            f"{batch.added_rows} ajout(s), "
+                            f"{batch.updated_rows} mise(s) à jour, "
+                            f"{batch.rejected_rows} rejet(s).",
+                        )
                     return redirect("import_report", pk=batch.pk)
 
     return render(request, "renewals/import.html", {

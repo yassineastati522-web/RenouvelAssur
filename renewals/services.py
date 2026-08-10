@@ -1,10 +1,11 @@
 import csv
+import logging
 import re
 import unicodedata
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from io import StringIO
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
 from django.conf import settings
 from django.db import transaction
@@ -14,6 +15,18 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from .models import Client, Contract, ImportBatch, Termination
+
+
+logger = logging.getLogger(__name__)
+MAX_IMPORT_ROWS_PER_SHEET = 50_000
+MAX_IMPORT_COLUMNS = 200
+MAX_IMPORT_CELLS = 2_000_000
+MAX_WORKBOOK_SHEETS = 20
+MAX_ARCHIVE_FILES = 1_000
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+INTERNAL_IMPORT_ERROR = (
+    "Import annulé à cause d’une erreur interne. Aucun contrat n’a été modifié."
+)
 
 
 # Les alias sont ordonnés : lorsqu'un fichier contient deux colonnes équivalentes,
@@ -178,7 +191,23 @@ def read_csv_rows(upload):
 
     first_line = next((line for line in text.splitlines() if line.strip()), "")
     delimiter = ";" if first_line.count(";") >= first_line.count(",") else ","
-    rows = list(csv.reader(StringIO(text), delimiter=delimiter))
+    rows = []
+    cell_count = 0
+    for row_number, row in enumerate(
+        csv.reader(StringIO(text), delimiter=delimiter), start=1
+    ):
+        if row_number > MAX_IMPORT_ROWS_PER_SHEET:
+            raise ValueError(
+                f"Le fichier dépasse la limite de {MAX_IMPORT_ROWS_PER_SHEET:,} lignes."
+            )
+        if len(row) > MAX_IMPORT_COLUMNS:
+            raise ValueError(
+                f"Le fichier dépasse la limite de {MAX_IMPORT_COLUMNS} colonnes."
+            )
+        cell_count += len(row)
+        if cell_count > MAX_IMPORT_CELLS:
+            raise ValueError("Le fichier contient trop de cellules à analyser.")
+        rows.append(row)
     header_index, _mapping, _rank = find_header(rows)
     return rows[header_index:] if rows else []
 
@@ -196,6 +225,24 @@ def read_rows(upload):
 
     upload.seek(0)
     try:
+        with ZipFile(upload) as archive:
+            members = archive.infolist()
+            if len(members) > MAX_ARCHIVE_FILES:
+                raise ValueError("Le fichier Excel contient trop de fichiers internes.")
+            if sum(member.file_size for member in members) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    "Le contenu décompressé du fichier Excel dépasse la limite autorisée."
+                )
+    except ValueError:
+        raise
+    except (BadZipFile, KeyError, OSError) as exc:
+        raise ValueError(
+            "Impossible de lire ce fichier Excel. Utilisez un fichier .xlsx ou le fichier .xls "
+            "fourni par l’assureur."
+        ) from exc
+
+    upload.seek(0)
+    try:
         workbook = load_workbook(upload, read_only=True, data_only=True)
     except (BadZipFile, InvalidFileException, KeyError, OSError, ValueError) as exc:
         raise ValueError(
@@ -204,9 +251,31 @@ def read_rows(upload):
         ) from exc
 
     try:
+        if len(workbook.worksheets) > MAX_WORKBOOK_SHEETS:
+            raise ValueError(
+                f"Le classeur dépasse la limite de {MAX_WORKBOOK_SHEETS} feuilles."
+            )
         best_rows, best_header_index, best_rank = [], 0, (-1, -1, 0, 0)
+        workbook_cell_count = 0
         for sheet_index, sheet in enumerate(workbook.worksheets):
-            rows = list(sheet.iter_rows(values_only=True))
+            if sheet.max_column > MAX_IMPORT_COLUMNS:
+                raise ValueError(
+                    f"La feuille « {sheet.title} » dépasse la limite de "
+                    f"{MAX_IMPORT_COLUMNS} colonnes."
+                )
+            rows = []
+            for row_number, row in enumerate(
+                sheet.iter_rows(values_only=True), start=1
+            ):
+                if row_number > MAX_IMPORT_ROWS_PER_SHEET:
+                    raise ValueError(
+                        f"La feuille « {sheet.title} » dépasse la limite de "
+                        f"{MAX_IMPORT_ROWS_PER_SHEET:,} lignes."
+                    )
+                workbook_cell_count += len(row)
+                if workbook_cell_count > MAX_IMPORT_CELLS:
+                    raise ValueError("Le classeur contient trop de cellules à analyser.")
+                rows.append(row)
             header_index, _mapping, rank = find_header(rows)
             sheet_rank = (*rank[:2], -sheet_index, rank[2])
             if sheet_rank > best_rank:
@@ -1588,12 +1657,21 @@ def import_contract_rows(rows, filename, user):
                     batch_size=500,
                 )
             mark_vehicle_renewals()
-    except Exception as exc:
+    except Exception:
+        logger.exception(
+            "Import transaction rolled back (batch_id=%s, import_type=%s)",
+            batch.pk,
+            import_type,
+        )
         batch.added_rows = 0
         batch.updated_rows = 0
         batch.rejected_rows += len(parsed)
         if len(batch.errors) < 100:
-            batch.errors.append({"line": 1, "error": f"Import annulé : {exc}"})
+            batch.errors.append({
+                "line": 1,
+                "code": "internal_error",
+                "error": INTERNAL_IMPORT_ERROR,
+            })
 
     return save_batch(batch)
 

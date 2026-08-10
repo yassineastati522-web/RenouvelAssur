@@ -9,6 +9,11 @@ from django.utils import timezone
 SESSION_DAY_KEY = "_renewal_login_day"
 
 
+def discard_client_ip(request):
+    """Avoid storing staff IP addresses in authentication-attempt records."""
+    return None
+
+
 def current_local_day():
     """Return the agency's current calendar day."""
     return timezone.localdate()
