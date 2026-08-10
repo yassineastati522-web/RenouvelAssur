@@ -4,7 +4,7 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 ## Fonctionnalités
 
-- authentification sécurisée, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
+- authentification sécurisée, mots de passe d’au moins 12 caractères, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
 - tableau de bord : échéances, relances, renouvellements et primes ;
 - import des échéances à venir, des bordereaux Excel et du suivi CSV/Excel des provisoires avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
 - reconnaissance des colonnes du bordereau assureur, validation, mise à jour idempotente et rapport d’erreurs ;
@@ -75,7 +75,7 @@ python manage.py check --deploy
 python -m pip_audit -r requirements.lock
 ```
 
-GitHub Actions exécute automatiquement l’audit, les contrôles Django, la vérification des migrations et les tests avec Python 3.13 sur chaque pull request et chaque envoi vers `main`.
+GitHub Actions exécute automatiquement l’audit des dépendances, les analyses statiques Bandit et Semgrep, les contrôles Django, la vérification des migrations et les tests avec Python 3.13 sur chaque pull request et chaque envoi vers `main`.
 
 ## Dépendances
 
@@ -90,7 +90,7 @@ python -m piptools compile --generate-hashes --strip-extras --output-file requir
 
 ## PostgreSQL et production
 
-Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, `DJANGO_SECRET_KEY` est obligatoire, `DJANGO_DEBUG=0` active HTTPS et la protection anti-bruteforce, et une sauvegarde régulière de Neon reste nécessaire. Le fichier `.env` n’est jamais versionné.
+Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, `DJANGO_SECRET_KEY` est obligatoire, `DJANGO_DEBUG=0` active HTTPS, HSTS, la protection anti-bruteforce, la politique CSP et l’interdiction de mise en cache des pages authentifiées. PostgreSQL refuse alors les modes SSL faibles et utilise au minimum `sslmode=require`. Une sauvegarde régulière de Neon reste nécessaire. Le fichier `.env` n’est jamais versionné.
 
 ## Déploiement sur Render avec Neon
 

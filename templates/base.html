@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260725-2">
   <link rel="stylesheet" href="{% static 'css/call-results.css' %}?v=20260725-2">
 </head>
-<body class="{% if user.is_authenticated %}app-body{% else %}auth-body{% endif %}">
+<body class="{% if user.is_authenticated %}app-body{% else %}auth-body{% endif %}"{% if session_expiry_iso %} data-session-expiry="{{ session_expiry_iso }}" data-login-url="{% url 'login' %}"{% endif %}>
 {% if user.is_authenticated %}
 <div class="shell">
   <aside class="sidebar" id="app-sidebar">
@@ -79,11 +79,11 @@
     </div>
   </aside>
 
-  <button class="nav-backdrop" type="button" aria-label="Fermer le menu" onclick="document.body.classList.remove('nav-open')"></button>
+  <button class="nav-backdrop" type="button" aria-label="Fermer le menu" data-nav-close></button>
 
   <main class="main">
     <header class="topbar">
-      <button class="menu" type="button" aria-label="Ouvrir le menu" aria-controls="app-sidebar" onclick="document.body.classList.toggle('nav-open')">
+      <button class="menu" type="button" aria-label="Ouvrir le menu" aria-controls="app-sidebar" data-nav-toggle>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
       <div class="topbar-context">
@@ -102,16 +102,6 @@
 {% else %}
   {% block anonymous %}{% endblock %}
 {% endif %}
-{% if session_expiry_iso %}
-<script>
-  (() => {
-    const expiresAt = Date.parse("{{ session_expiry_iso|escapejs }}");
-    const remaining = expiresAt - Date.now();
-    const leaveApplication = () => window.location.replace("{% url 'login' %}");
-    if (remaining <= 0) leaveApplication();
-    else window.setTimeout(leaveApplication, remaining);
-  })();
-</script>
-{% endif %}
+<script src="{% static 'js/app.js' %}" defer></script>
 </body>
 </html>
