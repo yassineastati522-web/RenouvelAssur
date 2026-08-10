@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from renewals.models import CallInteraction, Client, Contract, Termination, User
 
@@ -8,11 +9,19 @@ from renewals.models import CallInteraction, Client, Contract, Termination, User
 class Command(BaseCommand):
     help = "Crée des comptes et un portefeuille de démonstration"
 
+    def add_arguments(self, parser):
+        parser.add_argument("--admin-password", required=True)
+        parser.add_argument("--agent-password", required=True)
+
     def handle(self, *args, **options):
+        if not settings.DEBUG:
+            raise CommandError(
+                "seed_demo est désactivée lorsque DJANGO_DEBUG=0."
+            )
         admin, _ = User.objects.get_or_create(username="admin", defaults={"first_name": "Nadia", "last_name": "Admin", "role": User.Role.ADMIN, "is_staff": True, "is_superuser": True})
-        admin.set_password("Admin123!"); admin.save()
+        admin.set_password(options["admin_password"]); admin.save()
         agent, _ = User.objects.get_or_create(username="agent", defaults={"first_name": "Youssef", "last_name": "Amrani", "role": User.Role.AGENT})
-        agent.set_password("Agent123!"); agent.save()
+        agent.set_password(options["agent_password"]); agent.save()
         today = timezone.localdate()
         samples = [
             ("Sara El Idrissi", "0612345678", "POL-2026-001", "12345-A-6", 3, "to_contact", Decimal("4250")),
@@ -36,4 +45,4 @@ class Command(BaseCommand):
             if status == Contract.RenewalStatus.TERMINATED:
                 contract.manually_terminated = True; contract.event = "Résiliation"; contract.save()
                 Termination.objects.get_or_create(contract=contract, defaults={"reason": "Demande du client", "recorded_by": admin})
-        self.stdout.write(self.style.SUCCESS("Données créées. Comptes : admin/Admin123! et agent/Agent123!"))
+        self.stdout.write(self.style.SUCCESS("Données de démonstration créées."))

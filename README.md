@@ -4,15 +4,15 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 ## Fonctionnalités
 
-- authentification sécurisée et rôles Administrateur / Agent ;
-- tableau de bord : échéances, relances, renouvellements, primes et taux ;
+- authentification sécurisée, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
+- tableau de bord : échéances, relances, renouvellements et primes ;
 - import des échéances à venir, des bordereaux Excel et du suivi CSV/Excel des provisoires avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
 - reconnaissance des colonnes du bordereau assureur, validation, mise à jour idempotente et rapport d’erreurs ;
-- liste des échéances à 7, 15, 30 ou 60 jours, recherche et filtres ;
+- liste des contrats avec périodes relatives −15, −7, +7 et +15 jours, et statuts renouvelé / non renouvelé ;
 - fiche contrat avec trois résultats d’appel : Client appelé, Boîte vocale et Non joignable ;
-- checklist des clients à appeler avec recherche, filtre, identification des provisoires et enregistrement rapide du résultat ;
+- checklist des clients à appeler avec échéance minimale, filtres À appeler / Traités / Indisponibles, identification des provisoires et enregistrement rapide du résultat ;
 - statut de renouvellement géré séparément du résultat d’appel ;
-- historique complet et non destructif des interactions ;
+- historique complet, non destructif et paginé des interactions ;
 - fiches clients, téléphone modifiable et portefeuille associé ;
 - contrats expirés sans renouvellement et résiliations ; un nouveau contrat portant la même immatriculation marque automatiquement l’ancien comme renouvelé ;
 - suggestion « Injoignable » après trois tentatives infructueuses sur des jours distincts ;
@@ -20,26 +20,21 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 ## Installation locale
 
-Prérequis : Python 3.11 ou plus récent.
+Prérequis : Python 3.12 ou 3.13.
 
 ```powershell
 cd outputs\assurance_renewal
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 python manage.py migrate
-python manage.py seed_demo
+python manage.py seed_demo --admin-password "mot-de-passe-local" --agent-password "mot-de-passe-local"
 python manage.py runserver
 ```
 
 Ouvrir `http://127.0.0.1:8000/`.
 
-Comptes de démonstration :
-
-- administrateur : `admin` / `Admin123!`
-- agent : `agent` / `Agent123!`
-
-Changez ces mots de passe avant toute utilisation réelle.
+La commande `seed_demo` est réservée au développement (`DJANGO_DEBUG=1`), exige des mots de passe explicites et refuse de s’exécuter en production.
 
 ## Import des fichiers
 
@@ -77,11 +72,25 @@ Un second fichier Excel ne contenant que `Téléphone` et un identifiant (`Polic
 ```powershell
 python manage.py test
 python manage.py check --deploy
+python -m pip_audit -r requirements.lock
+```
+
+GitHub Actions exécute automatiquement l’audit, les contrôles Django, la vérification des migrations et les tests avec Python 3.13 sur chaque pull request et chaque envoi vers `main`.
+
+## Dépendances
+
+`requirements.txt` est la liste courte des dépendances directes. `requirements.lock` verrouille toutes les dépendances transitives et leurs empreintes SHA-256 ; Render installe ce verrou sans mettre `pip` à jour pendant chaque déploiement.
+
+Pour mettre le verrou à jour volontairement :
+
+```powershell
+python -m pip install pip-tools==7.6.0
+python -m piptools compile --generate-hashes --strip-extras --output-file requirements.lock requirements.txt
 ```
 
 ## PostgreSQL et production
 
-Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, utiliser une clé `DJANGO_SECRET_KEY` longue, `DJANGO_DEBUG=0`, HTTPS, un serveur WSGI/ASGI et une sauvegarde régulière de la base. Le fichier `.env` n’est jamais versionné.
+Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, `DJANGO_SECRET_KEY` est obligatoire, `DJANGO_DEBUG=0` active HTTPS et la protection anti-bruteforce, et une sauvegarde régulière de Neon reste nécessaire. Le fichier `.env` n’est jamais versionné.
 
 ## Déploiement sur Render avec Neon
 
@@ -91,7 +100,7 @@ Le fichier `render.yaml` et le script `build.sh` préparent automatiquement le s
 2. Lorsque Render le demande, renseigner `DATABASE_URL` avec l’URL PostgreSQL fournie par Neon, comprenant `sslmode=require`.
 3. Laisser Render générer `DJANGO_SECRET_KEY` et déployer la branche `main`.
 4. Vérifier `https://<service>.onrender.com/health/`, puis se connecter avec le compte administrateur déjà présent dans Neon.
-5. Pour un domaine personnalisé, ajouter le domaine dans Render, puis compléter `DJANGO_ALLOWED_HOSTS` et `DJANGO_CSRF_TRUSTED_ORIGINS`.
+5. Le domaine `app.renouvelassur.org` et l’hôte exact `renouvelassur.onrender.com` sont déclarés dans `render.yaml`; adaptez ces deux listes si le nom du service change.
 
 Le plan gratuit est adapté à la validation uniquement, car il peut se mettre en veille. Utiliser une instance payante avant l’ouverture professionnelle.
 

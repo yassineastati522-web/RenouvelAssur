@@ -169,7 +169,11 @@ class Contract(models.Model):
         if self.days_remaining <= 15: return "high"
         return "normal"
     @property
-    def last_interaction(self): return self.interactions.order_by("-occurred_at").first()
+    def last_interaction(self):
+        prefetched = getattr(self, "_latest_interactions", None)
+        if prefetched is not None:
+            return prefetched[0] if prefetched else None
+        return self.interactions.order_by("-occurred_at", "-pk").first()
 
 
 class ImportBatch(models.Model):
@@ -226,6 +230,17 @@ class CallInteraction(models.Model):
     class Meta:
         ordering = ["-occurred_at"]
     def __str__(self): return f"{self.contract} — {self.get_call_result_display()}"
+
+
+QUICK_CALL_RESULTS = tuple(
+    choice
+    for choice in CallInteraction.Result.choices
+    if choice[0] in {
+        CallInteraction.Result.ANSWERED,
+        CallInteraction.Result.VOICEMAIL,
+        CallInteraction.Result.UNREACHABLE,
+    }
+)
 
 
 class Renewal(models.Model):

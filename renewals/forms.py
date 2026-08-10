@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import CallInteraction, Client, Contract
+from .models import CallInteraction, Client, QUICK_CALL_RESULTS
 
 
 class ImportForm(forms.Form):
@@ -127,11 +127,7 @@ class InteractionForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["call_result"].label = "Résultat de l’appel"
-        self.fields["call_result"].choices = [
-            (CallInteraction.Result.ANSWERED, "Client appelé"),
-            (CallInteraction.Result.VOICEMAIL, "Boîte vocale"),
-            (CallInteraction.Result.UNREACHABLE, "Non joignable"),
-        ]
+        self.fields["call_result"].choices = QUICK_CALL_RESULTS
 
     class Meta:
         model = CallInteraction
@@ -146,9 +142,3 @@ class ClientForm(forms.ModelForm):
     class Meta:
         model = Client
         fields = ["name", "phone", "external_id", "email"]
-
-
-class ContractStatusForm(forms.ModelForm):
-    class Meta:
-        model = Contract
-        fields = ["renewal_status"]

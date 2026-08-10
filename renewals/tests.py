@@ -1,14 +1,14 @@
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from io import BytesIO
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core.management import call_command
+from django.core.management import call_command, CommandError
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
-from django.test import SimpleTestCase, TestCase, TransactionTestCase
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -34,23 +34,29 @@ class MidnightSessionSecurityTests(TestCase):
     @patch("renewals.session_security.next_local_midnight")
     @patch("renewals.session_security.current_local_day")
     def test_login_expires_at_the_next_local_midnight(self, local_day, midnight):
-        local_day.return_value = date(2026, 8, 4)
-        midnight.return_value = timezone.make_aware(datetime(2026, 8, 5, 0, 0))
+        login_day = timezone.localdate()
+        local_day.return_value = login_day
+        midnight.return_value = timezone.make_aware(
+            datetime.combine(login_day + timedelta(days=1), time.min)
+        )
 
         self.assertTrue(self.client.login(username="midnight-user", password="secret"))
 
         session = self.client.session
-        self.assertEqual(session[SESSION_DAY_KEY], "2026-08-04")
+        self.assertEqual(session[SESSION_DAY_KEY], login_day.isoformat())
         self.assertEqual(session.get_expiry_date(), midnight.return_value)
 
     @patch("renewals.session_security.next_local_midnight")
     @patch("renewals.session_security.current_local_day")
     def test_authenticated_account_is_logged_out_after_midnight(self, local_day, midnight):
-        local_day.return_value = date(2026, 8, 4)
-        midnight.return_value = timezone.make_aware(datetime(2026, 8, 5, 0, 0))
+        login_day = timezone.localdate()
+        local_day.return_value = login_day
+        midnight.return_value = timezone.make_aware(
+            datetime.combine(login_day + timedelta(days=1), time.min)
+        )
         self.assertTrue(self.client.login(username="midnight-user", password="secret"))
 
-        local_day.return_value = date(2026, 8, 5)
+        local_day.return_value = login_day + timedelta(days=1)
         response = self.client.get(reverse("health_check"))
 
         self.assertEqual(response.status_code, 200)
@@ -59,8 +65,11 @@ class MidnightSessionSecurityTests(TestCase):
     @patch("renewals.session_security.next_local_midnight")
     @patch("renewals.session_security.current_local_day")
     def test_authenticated_page_schedules_browser_exit_at_expiry(self, local_day, midnight):
-        local_day.return_value = date(2026, 8, 4)
-        midnight.return_value = timezone.make_aware(datetime(2026, 8, 5, 0, 0))
+        login_day = timezone.localdate()
+        local_day.return_value = login_day
+        midnight.return_value = timezone.make_aware(
+            datetime.combine(login_day + timedelta(days=1), time.min)
+        )
         self.assertTrue(self.client.login(username="midnight-user", password="secret"))
 
         response = self.client.get(reverse("dashboard"))
@@ -68,8 +77,9 @@ class MidnightSessionSecurityTests(TestCase):
         self.assertContains(response, "const expiresAt = Date.parse")
         self.assertContains(response, "window.setTimeout(leaveApplication, remaining)")
 
-    @patch("renewals.session_security.current_local_day", return_value=date(2026, 8, 4))
+    @patch("renewals.session_security.current_local_day")
     def test_session_created_before_deployment_is_logged_out_once(self, local_day):
+        local_day.return_value = timezone.localdate()
         self.client.force_login(self.user)
         session = self.client.session
         session.pop(SESSION_DAY_KEY, None)
@@ -78,6 +88,43 @@ class MidnightSessionSecurityTests(TestCase):
         self.client.get(reverse("health_check"))
 
         self.assertNotIn("_auth_user_id", self.client.session)
+
+
+@override_settings(AXES_ENABLED=True)
+class LoginThrottlingTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("protected-user", password="secret")
+
+    def test_account_is_temporarily_locked_after_five_failures(self):
+        login_url = reverse("login")
+        for _attempt in range(5):
+            self.client.post(login_url, {
+                "username": self.user.username,
+                "password": "incorrect",
+            })
+
+        response = self.client.post(login_url, {
+            "username": self.user.username,
+            "password": "secret",
+        })
+
+        self.assertEqual(response.status_code, 429)
+        self.assertContains(
+            response,
+            "Connexion temporairement bloquée",
+            status_code=429,
+        )
+
+
+class DemoCommandSecurityTests(TestCase):
+    @override_settings(DEBUG=False)
+    def test_demo_seed_is_rejected_outside_debug_mode(self):
+        with self.assertRaisesMessage(CommandError, "seed_demo est désactivée"):
+            call_command(
+                "seed_demo",
+                admin_password="not-used",
+                agent_password="not-used",
+            )
 
 
 def excel_upload(rows, filename="contrats.xlsx", leading_sheet=None):
@@ -1483,6 +1530,59 @@ class ApplicationFlowTests(TestCase):
         )
         self.assertEqual(visible_client.contract_count, 2)
 
+    def test_contract_list_fetches_latest_interactions_without_n_plus_one(self):
+        for index in range(5):
+            client = Client.objects.create(name=f"Client requête {index}")
+            contract = Contract.objects.create(
+                client=client,
+                assigned_agent=self.user,
+                policy_number=f"QUERY-{index}",
+                receipt=f"QQ-{index}",
+                end_date=timezone.localdate() + timedelta(days=5),
+            )
+            CallInteraction.objects.create(
+                contract=contract,
+                employee=self.user,
+                call_result=CallInteraction.Result.ANSWERED,
+                renewal_status=contract.renewal_status,
+            )
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(reverse("contract_list"), {
+                "period": "plus7",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        interaction_queries = [
+            query["sql"]
+            for query in queries
+            if "renewals_callinteraction" in query["sql"].lower()
+        ]
+        self.assertEqual(len(interaction_queries), 1)
+        self.assertContains(response, "Client appelé")
+
+    def test_client_interaction_history_is_paginated(self):
+        CallInteraction.objects.bulk_create([
+            CallInteraction(
+                contract=self.contract,
+                employee=self.user,
+                call_result=CallInteraction.Result.ANSWERED,
+                renewal_status=self.contract.renewal_status,
+                comment=f"interaction-{index:02}",
+            )
+            for index in range(35)
+        ])
+        detail_url = reverse("client_detail", args=[self.client_obj.pk])
+
+        first_page = self.client.get(detail_url)
+        second_page = self.client.get(detail_url, {"page": 2})
+
+        self.assertEqual(first_page.context["interactions"].paginator.count, 35)
+        self.assertEqual(len(first_page.context["interactions"]), 30)
+        self.assertContains(first_page, "1 / 2")
+        self.assertEqual(len(second_page.context["interactions"]), 5)
+        self.assertContains(second_page, "interaction-00")
+
     def test_renewal_list_uses_relative_periods_and_two_statuses(self):
         past_client = Client.objects.create(
             name="Client échu depuis dix jours",
@@ -2321,3 +2421,41 @@ class ExcelImportFlowTests(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Impossible de lire ce fichier Excel")
+
+    @patch("renewals.services.MAX_IMPORT_ROWS_PER_SHEET", 2)
+    def test_excel_over_the_row_limit_is_rejected_before_import(self):
+        upload = excel_upload([
+            ["POLICE", "CLIENT", "DATE_ECHEANCE", "PRIME_TOTAL", "NUM_QUITTANCE"],
+            ["LIMIT-1", "Client un", "31/12/2026", 100, "QL-1"],
+            ["LIMIT-2", "Client deux", "31/12/2026", 200, "QL-2"],
+        ])
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "limite de 2 lignes")
+        self.assertFalse(Contract.objects.exists())
+
+    @patch(
+        "renewals.services.mark_vehicle_renewals",
+        side_effect=RuntimeError("internal-database-detail"),
+    )
+    def test_unexpected_import_error_is_generic_and_rolls_back(self, _mark):
+        upload = excel_upload([
+            ["POLICE", "CLIENT", "DATE_ECHEANCE", "PRIME_TOTAL", "NUM_QUITTANCE"],
+            ["ROLLBACK-1", "Client rollback", "31/12/2026", 100, "QR-1"],
+        ])
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        }, follow=True)
+
+        self.assertContains(response, "Import annulé à cause d’une erreur interne")
+        self.assertNotContains(response, "internal-database-detail")
+        self.assertFalse(Contract.objects.exists())
+        batch = ImportBatch.objects.get()
+        self.assertEqual(batch.errors[0]["code"], "internal_error")

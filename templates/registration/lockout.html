@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Connexion temporairement bloquée — RenouvelAssur{% endblock %}
+{% block anonymous %}
+<main class="login-page">
+  <section class="login-visual" aria-label="Présentation de RenouvelAssur">
+    <div class="visual-content">
+      <div class="brand brand-light">
+        <span class="brand-mark">RA</span>
+        <strong>Renouvel<span>Assur</span></strong>
+      </div>
+      <div class="login-hero">
+        <h1>Chaque échéance,<br><em>une opportunité.</em></h1>
+        <p>Centralisez vos contrats et organisez vos relances.</p>
+      </div>
+    </div>
+  </section>
+  <section class="login-form">
+    <div>
+      <span class="eyebrow">ESPACE SÉCURISÉ</span>
+      <h2>Connexion temporairement bloquée</h2>
+      <p>Trop de tentatives incorrectes ont été détectées pour ce compte. Réessayez dans 30 minutes ou contactez l’administrateur.</p>
+      <a class="btn primary wide login-submit" href="{% url 'login' %}">Revenir à la connexion</a>
+    </div>
+  </section>
+</main>
+{% endblock %}

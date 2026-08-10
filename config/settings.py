@@ -1,15 +1,25 @@
 import os
 import urllib.parse
+from datetime import timedelta
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 IS_HOSTED = bool(os.environ.get("VERCEL") or os.environ.get("RENDER"))
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-change-me")
 DEBUG = os.environ.get(
     "DJANGO_DEBUG", "0" if IS_HOSTED else "1"
 ) == "1"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "dev-only-change-me"
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY doit être définie lorsque DJANGO_DEBUG=0."
+        )
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
-    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.vercel.app,.onrender.com"
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1"
 ).split(",") if h.strip()]
 
 for hostname in (
@@ -33,6 +43,7 @@ for hostname in (
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
+    "axes",
     "renewals",
 ]
 MIDDLEWARE = [
@@ -44,7 +55,24 @@ MIDDLEWARE = [
     "renewals.session_security.LogoutAfterMidnightMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
 ]
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = timedelta(minutes=30)
+AXES_LOCKOUT_PARAMETERS = ["username"]
+AXES_CLIENT_IP_CALLABLE = "renewals.session_security.discard_client_ip"
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_TEMPLATE = "registration/lockout.html"
+AXES_HTTP_RESPONSE_CODE = 429
+AXES_ENABLED = os.environ.get(
+    "DJANGO_AXES_ENABLED", "1" if not DEBUG else "0"
+) == "1"
+# Username-only tracking is intentional: it avoids retaining staff IP addresses.
+SILENCED_SYSTEM_CHECKS = ["axes.W006"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 STORAGES = {
