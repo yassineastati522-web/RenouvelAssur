@@ -8,6 +8,10 @@ class User(AbstractUser):
         ADMIN = "admin", "Administrateur"
         AGENT = "agent", "Agent"
     role = models.CharField(max_length=10, choices=Role.choices, default=Role.AGENT)
+    must_change_password = models.BooleanField(
+        "changement de mot de passe requis",
+        default=False,
+    )
 
     @property
     def is_agency_admin(self):
@@ -199,6 +203,52 @@ class ImportBatch(models.Model):
     rejected_rows = models.PositiveIntegerField(default=0)
     errors = models.JSONField(default=list, blank=True)
     def __str__(self): return f"{self.filename} ({self.imported_at:%d/%m/%Y})"
+
+
+class AuditEvent(models.Model):
+    class Action(models.TextChoices):
+        LOGIN_SUCCEEDED = "login_succeeded", "Connexion réussie"
+        LOGIN_FAILED = "login_failed", "Échec de connexion"
+        LOGOUT = "logout", "Déconnexion"
+        PASSWORD_CHANGED = "password_changed", "Mot de passe modifié"
+        USER_CREATED = "user_created", "Utilisateur créé"
+        USER_UPDATED = "user_updated", "Utilisateur modifié"
+        USER_DELETED = "user_deleted", "Utilisateur supprimé"
+        IMPORT_COMPLETED = "import_completed", "Import terminé"
+        IMPORT_FAILED = "import_failed", "Import échoué"
+        CLIENT_UPDATED = "client_updated", "Client modifié"
+        CONTRACT_UPDATED = "contract_updated", "Contrat modifié"
+        CONTRACT_DELETED = "contract_deleted", "Contrat supprimé"
+        TERMINATION_RECORDED = "termination_recorded", "Résiliation enregistrée"
+        PROVISIONAL_PLAN_UPDATED = "provisional_plan_updated", "Plan provisoire modifié"
+        CALL_RECORDED = "call_recorded", "Appel enregistré"
+        RECORD_UPDATED = "record_updated", "Enregistrement modifié"
+        RECORD_DELETED = "record_deleted", "Enregistrement supprimé"
+
+    actor = models.ForeignKey(
+        User,
+        related_name="audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=40, choices=Action.choices, db_index=True)
+    target_type = models.CharField(max_length=80, blank=True)
+    target_id = models.CharField(max_length=64, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-occurred_at", "-pk"]
+        indexes = [
+            models.Index(
+                fields=["action", "occurred_at"],
+                name="renewals_aud_action_06fc21_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_action_display()} — {self.occurred_at:%d/%m/%Y %H:%M}"
 
 
 class CallInteraction(models.Model):

@@ -51,8 +51,10 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware", "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "renewals.session_security.LogoutAfterMidnightMiddleware",
     "renewals.session_security.ApplicationSecurityHeadersMiddleware",
+    "renewals.session_security.LogoutAfterMidnightMiddleware",
+    "renewals.session_security.RequirePasswordChangeMiddleware",
+    "renewals.session_security.AgencyAdminAccessMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "axes.middleware.AxesMiddleware",
@@ -171,6 +173,16 @@ AUTH_USER_MODEL = "renewals.User"
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
+
+MAX_IMPORT_FILE_SIZE_BYTES = int(os.environ.get(
+    "MAX_IMPORT_FILE_SIZE_BYTES", str(10 * 1024 * 1024)
+))
+MAX_IMPORT_CELL_TEXT_LENGTH = int(os.environ.get(
+    "MAX_IMPORT_CELL_TEXT_LENGTH", "10000"
+))
+AUDIT_LOG_RETENTION_DAYS = int(os.environ.get(
+    "AUDIT_LOG_RETENTION_DAYS", "730"
+))
 
 SECURE_SSL_REDIRECT = os.environ.get(
     "DJANGO_SECURE_SSL_REDIRECT", "1" if not DEBUG else "0"

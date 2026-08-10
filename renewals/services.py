@@ -24,6 +24,7 @@ MAX_IMPORT_CELLS = 2_000_000
 MAX_WORKBOOK_SHEETS = 20
 MAX_ARCHIVE_FILES = 1_000
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+ZIP_MAGIC = b"PK\x03\x04"
 INTERNAL_IMPORT_ERROR = (
     "Import annulé à cause d’une erreur interne. Aucun contrat n’a été modifié."
 )
@@ -176,6 +177,54 @@ def find_header(rows, scan_limit=30):
     return best_index, best_mapping, best_rank
 
 
+def validate_import_file(upload, expected_type=None):
+    """Vérifie le nom, la taille et la signature avant toute analyse."""
+    filename = str(getattr(upload, "name", ""))
+    lower_name = filename.lower()
+    allowed_extensions = (
+        (".csv", ".xlsx", ".xls")
+        if expected_type == ImportBatch.ImportType.PROVISIONAL
+        else (".xlsx", ".xls")
+    )
+    if not lower_name.endswith(allowed_extensions):
+        if expected_type == ImportBatch.ImportType.PROVISIONAL:
+            raise ValueError(
+                "Le suivi provisoire doit être au format .csv, .xlsx ou .xls."
+            )
+        raise ValueError("Le fichier doit être au format Excel (.xlsx ou .xls).")
+
+    file_size = getattr(upload, "size", None)
+    if file_size is not None and file_size > settings.MAX_IMPORT_FILE_SIZE_BYTES:
+        max_megabytes = settings.MAX_IMPORT_FILE_SIZE_BYTES // (1024 * 1024)
+        raise ValueError(
+            f"Le fichier ne doit pas dépasser {max_megabytes} Mo."
+        )
+
+    upload.seek(0)
+    prefix = upload.read(512)
+    upload.seek(0)
+    if lower_name.endswith(".csv"):
+        if b"\x00" in prefix:
+            raise ValueError("Le fichier CSV contient des données binaires invalides.")
+    elif not prefix.startswith(ZIP_MAGIC):
+        raise ValueError(
+            "Impossible de lire ce fichier Excel : le contenu ne correspond "
+            "pas à un classeur valide. "
+            "Utilisez uniquement un vrai fichier .xlsx/.xls fourni par l’assureur."
+        )
+
+
+def validate_row_cells(row):
+    for value in row:
+        if (
+            isinstance(value, str)
+            and len(value) > settings.MAX_IMPORT_CELL_TEXT_LENGTH
+        ):
+            raise ValueError(
+                "Le fichier contient une cellule texte anormalement longue."
+            )
+
+
 def read_csv_rows(upload):
     upload.seek(0)
     content = upload.read()
@@ -204,6 +253,7 @@ def read_csv_rows(upload):
             raise ValueError(
                 f"Le fichier dépasse la limite de {MAX_IMPORT_COLUMNS} colonnes."
             )
+        validate_row_cells(row)
         cell_count += len(row)
         if cell_count > MAX_IMPORT_CELLS:
             raise ValueError("Le fichier contient trop de cellules à analyser.")
@@ -214,6 +264,14 @@ def read_csv_rows(upload):
 
 def read_rows(upload):
     """Lit le tableau CSV/Excel pertinent et le recadre sur ses en-têtes."""
+    validate_import_file(
+        upload,
+        expected_type=(
+            ImportBatch.ImportType.PROVISIONAL
+            if upload.name.lower().endswith(".csv")
+            else None
+        ),
+    )
     filename = upload.name.lower()
     if filename.endswith(".csv"):
         return read_csv_rows(upload)
@@ -272,6 +330,7 @@ def read_rows(upload):
                         f"La feuille « {sheet.title} » dépasse la limite de "
                         f"{MAX_IMPORT_ROWS_PER_SHEET:,} lignes."
                     )
+                validate_row_cells(row)
                 workbook_cell_count += len(row)
                 if workbook_cell_count > MAX_IMPORT_CELLS:
                     raise ValueError("Le classeur contient trop de cellules à analyser.")
@@ -1677,6 +1736,7 @@ def import_contract_rows(rows, filename, user):
 
 
 def import_contracts(upload, user, expected_type=None):
+    validate_import_file(upload, expected_type=expected_type)
     rows = read_rows(upload)
     detected_type = detect_import_type(header_map(rows[0])) if rows else ImportBatch.ImportType.GENERAL
     if expected_type and detected_type != expected_type:

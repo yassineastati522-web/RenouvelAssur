@@ -1,6 +1,7 @@
 from django import forms
 
 from .models import CallInteraction, Client, QUICK_CALL_RESULTS
+from .services import validate_import_file
 
 
 class ImportForm(forms.Form):
@@ -43,21 +44,10 @@ class ImportForm(forms.Form):
 
     def clean_file(self):
         value = self.cleaned_data["file"]
-        allowed_extensions = (
-            (".csv", ".xlsx", ".xls")
-            if self.import_type == "provisional"
-            else (".xlsx", ".xls")
-        )
-        if not value.name.lower().endswith(allowed_extensions):
-            if self.import_type == "provisional":
-                raise forms.ValidationError(
-                    "Le suivi provisoire doit être au format .csv, .xlsx ou .xls."
-                )
-            raise forms.ValidationError(
-                "Le fichier doit être au format Excel (.xlsx ou .xls)."
-            )
-        if value.size > 15 * 1024 * 1024:
-            raise forms.ValidationError("Le fichier ne doit pas dépasser 15 Mo.")
+        try:
+            validate_import_file(value, expected_type=self.import_type)
+        except ValueError as exc:
+            raise forms.ValidationError(str(exc)) from exc
         return value
 
 

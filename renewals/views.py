@@ -3,11 +3,13 @@ from decimal import Decimal
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db import transaction
 from django.db.models import Case, Count, DateField, F, OuterRef, Prefetch, Q, Subquery, Sum, When
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
+from .audit import record_audit_event
 from .forms import (
     ChecklistDateFilterForm,
     ClientForm,
@@ -17,6 +19,7 @@ from .forms import (
     ProvisionalPlanForm,
 )
 from .models import (
+    AuditEvent,
     CallInteraction,
     Client,
     Contract,
@@ -162,6 +165,7 @@ def terminated_list(request):
 
 
 @login_required
+@transaction.atomic
 def contract_detail(request, pk):
     contract = get_object_or_404(scoped_contracts(request.user), pk=pk)
     is_plan_post = (
@@ -187,6 +191,12 @@ def contract_detail(request, pk):
         contract.save(
             update_fields=["provisional_selected_count", "updated_at"]
         )
+        record_audit_event(
+            actor=request.user,
+            action=AuditEvent.Action.PROVISIONAL_PLAN_UPDATED,
+            target=contract,
+            details={"provisional_count": selected_count},
+        )
         messages.success(
             request,
             f"Choix enregistré : {selected_count} provisoire"
@@ -195,6 +205,7 @@ def contract_detail(request, pk):
         return redirect("contract_detail", pk=contract.pk)
     if request.method == "POST" and not is_plan_post and form.is_valid():
         selected_status = form.cleaned_data["renewal_status"]
+        previous_status = contract.renewal_status
         already_terminated = (
             contract.is_terminated
             or Termination.objects.filter(contract=contract).exists()
@@ -210,6 +221,12 @@ def contract_detail(request, pk):
             )
             return redirect("contract_detail", pk=contract.pk)
         interaction = form.save(commit=False); interaction.contract = contract; interaction.employee = request.user; interaction.save()
+        record_audit_event(
+            actor=request.user,
+            action=AuditEvent.Action.CALL_RECORDED,
+            target=contract,
+            details={"outcome": interaction.call_result},
+        )
         contract.renewal_status = interaction.renewal_status
         update_fields = ["renewal_status", "updated_at"]
         if interaction.renewal_status == Contract.RenewalStatus.TERMINATED:
@@ -226,6 +243,21 @@ def contract_detail(request, pk):
                 },
             )
         contract.save(update_fields=update_fields)
+        record_audit_event(
+            actor=request.user,
+            action=AuditEvent.Action.CONTRACT_UPDATED,
+            target=contract,
+            details={
+                "previous_status": previous_status,
+                "new_status": interaction.renewal_status,
+            },
+        )
+        if interaction.renewal_status == Contract.RenewalStatus.TERMINATED:
+            record_audit_event(
+                actor=request.user,
+                action=AuditEvent.Action.TERMINATION_RECORDED,
+                target=contract,
+            )
         messages.success(request, "Interaction enregistrée dans l’historique.")
         missed = {CallInteraction.Result.VOICEMAIL, CallInteraction.Result.UNREACHABLE, CallInteraction.Result.OFF}
         missed_days = contract.interactions.filter(call_result__in=missed).dates("occurred_at", "day").count()
@@ -242,11 +274,17 @@ def contract_detail(request, pk):
 @login_required
 @user_passes_test(lambda u: u.is_agency_admin)
 @require_http_methods(["GET", "POST"])
+@transaction.atomic
 def contract_delete(request, pk):
     contract = get_object_or_404(Contract.objects.select_related("client"), pk=pk)
     if request.method == "POST":
         policy_number = contract.policy_number
         client_name = contract.client.name
+        record_audit_event(
+            actor=request.user,
+            action=AuditEvent.Action.CONTRACT_DELETED,
+            target=contract,
+        )
         contract.delete()
         messages.success(request, f"Le contrat {policy_number} de {client_name} a été supprimé.")
         return redirect("contract_list")
@@ -258,6 +296,7 @@ def contract_delete(request, pk):
 
 
 @login_required
+@transaction.atomic
 def call_checklist(request):
     allowed_contracts = exclude_terminated_contracts(
         scoped_contracts(request.user)
@@ -276,6 +315,12 @@ def call_checklist(request):
                 call_result=result,
                 renewal_status=contract.renewal_status,
                 comment=request.POST.get("comment", "").strip(),
+            )
+            record_audit_event(
+                actor=request.user,
+                action=AuditEvent.Action.CALL_RECORDED,
+                target=contract,
+                details={"outcome": result},
             )
             messages.success(request, f"Appel de {contract.client.name} enregistré dans la checklist.")
         return redirect(request.get_full_path())
@@ -397,12 +442,23 @@ def client_list(request):
 
 
 @login_required
+@transaction.atomic
 def client_detail(request, pk):
     client = get_object_or_404(Client, pk=pk)
     allowed = scoped_contracts(request.user).filter(client=client)
     if not allowed.exists() and not request.user.is_agency_admin: return HttpResponseForbidden()
     form = ClientForm(request.POST or None, instance=client)
-    if request.method == "POST" and form.is_valid(): form.save(); messages.success(request, "Coordonnées mises à jour."); return redirect("client_detail", pk=pk)
+    if request.method == "POST" and form.is_valid():
+        changed_fields = form.changed_data
+        form.save()
+        record_audit_event(
+            actor=request.user,
+            action=AuditEvent.Action.CLIENT_UPDATED,
+            target=client,
+            details={"changed_fields": changed_fields},
+        )
+        messages.success(request, "Coordonnées mises à jour.")
+        return redirect("client_detail", pk=pk)
     interactions = paginate(
         request,
         CallInteraction.objects.filter(contract__in=allowed)
@@ -414,6 +470,7 @@ def client_detail(request, pk):
 
 
 @login_required
+@transaction.atomic
 def import_view(request):
     allowed_types = {
         ImportBatch.ImportType.UPCOMING,
@@ -459,11 +516,20 @@ def import_view(request):
                     )
                 except ValueError as exc:
                     active_form.add_error("file", str(exc))
+                    record_audit_event(
+                        actor=request.user,
+                        action=AuditEvent.Action.IMPORT_FAILED,
+                        details={
+                            "import_type": requested_type,
+                            "outcome": "validation_error",
+                        },
+                    )
                 else:
-                    if any(
+                    internal_error = any(
                         error.get("code") == "internal_error"
                         for error in batch.errors
-                    ):
+                    )
+                    if internal_error:
                         messages.error(
                             request,
                             "Import annulé à cause d’une erreur interne. "
@@ -477,6 +543,24 @@ def import_view(request):
                             f"{batch.updated_rows} mise(s) à jour, "
                             f"{batch.rejected_rows} rejet(s).",
                         )
+                    record_audit_event(
+                        actor=request.user,
+                        action=(
+                            AuditEvent.Action.IMPORT_FAILED
+                            if internal_error
+                            else AuditEvent.Action.IMPORT_COMPLETED
+                        ),
+                        target=batch,
+                        details={
+                            "import_type": batch.import_type,
+                            "added_rows": batch.added_rows,
+                            "updated_rows": batch.updated_rows,
+                            "rejected_rows": batch.rejected_rows,
+                            "outcome": (
+                                "rolled_back" if internal_error else "completed"
+                            ),
+                        },
+                    )
                     return redirect("import_report", pk=batch.pk)
 
     return render(request, "renewals/import.html", {
