@@ -36,6 +36,12 @@ jobs:
           python -m pip install pip-audit==2.10.1
           python -m pip_audit -r requirements.lock
 
+      - name: Analyser statiquement la sécurité
+        run: |
+          python -m pip install bandit==1.9.4 semgrep==1.172.0
+          bandit -q -r config renewals -x renewals/tests.py,renewals/migrations
+          semgrep scan --config p/python --config p/django --error --metrics=off --exclude renewals/tests.py --exclude renewals/migrations
+
       - name: Vérifier Django et les migrations
         run: |
           python manage.py check

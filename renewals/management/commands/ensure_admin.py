@@ -1,11 +1,13 @@
 import os
 
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
-    help = "Crée le premier administrateur depuis les variables Vercel, si nécessaire."
+    help = "Crée le premier administrateur depuis les variables d'environnement, si nécessaire."
 
     def handle(self, *args, **options):
         password = os.environ.get("DJANGO_SUPERUSER_PASSWORD")
@@ -25,6 +27,12 @@ class Command(BaseCommand):
 
         changed_fields = []
         if created or not user.check_password(password):
+            try:
+                validate_password(password, user=user)
+            except ValidationError as exc:
+                if created:
+                    user.delete()
+                raise CommandError("Mot de passe administrateur refusé : " + " ".join(exc.messages)) from exc
             user.set_password(password)
             changed_fields.append("password")
         if email and user.email != email:

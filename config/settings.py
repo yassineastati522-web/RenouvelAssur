@@ -6,14 +6,15 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-IS_HOSTED = bool(os.environ.get("VERCEL") or os.environ.get("RENDER"))
+IS_HOSTED = bool(os.environ.get("RENDER"))
 DEBUG = os.environ.get(
     "DJANGO_DEBUG", "0" if IS_HOSTED else "1"
 ) == "1"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
 if not SECRET_KEY:
     if DEBUG:
-        SECRET_KEY = "dev-only-change-me"
+        # Fixed local-only value; production refuses to start without its own secret.
+        SECRET_KEY = "dev-only-change-me"  # nosec B105
     else:
         raise ImproperlyConfigured(
             "DJANGO_SECRET_KEY doit être définie lorsque DJANGO_DEBUG=0."
@@ -24,7 +25,6 @@ ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
 
 for hostname in (
     os.environ.get("RENDER_EXTERNAL_HOSTNAME"),
-    os.environ.get("VERCEL_URL"),
 ):
     if hostname and hostname not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(hostname)
@@ -34,7 +34,6 @@ CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in os.environ.get(
 ).split(",") if origin.strip()]
 for hostname in (
     os.environ.get("RENDER_EXTERNAL_HOSTNAME"),
-    os.environ.get("VERCEL_URL"),
 ):
     origin = f"https://{hostname}" if hostname else ""
     if origin and origin not in CSRF_TRUSTED_ORIGINS:
@@ -53,6 +52,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware", "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "renewals.session_security.LogoutAfterMidnightMiddleware",
+    "renewals.session_security.ApplicationSecurityHeadersMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "axes.middleware.AxesMiddleware",
@@ -98,6 +98,25 @@ TEMPLATES = [{
 }]
 WSGI_APPLICATION = "config.wsgi.application"
 
+
+SECURE_POSTGRES_SSLMODES = {"require", "verify-ca", "verify-full"}
+
+
+def secure_postgres_options(options, *, require_ssl):
+    """Require an encrypted PostgreSQL connection outside development."""
+    secured = dict(options)
+    if not require_ssl:
+        return secured
+    sslmode = str(secured.get("sslmode") or "require").lower()
+    if sslmode not in SECURE_POSTGRES_SSLMODES:
+        raise ImproperlyConfigured(
+            "PostgreSQL doit utiliser sslmode=require, verify-ca ou verify-full "
+            "lorsque DJANGO_DEBUG=0."
+        )
+    secured["sslmode"] = sslmode
+    return secured
+
+
 if os.environ.get("DATABASE_URL"):
     database_url = urllib.parse.urlparse(os.environ["DATABASE_URL"])
     database_options = {
@@ -106,6 +125,10 @@ if os.environ.get("DATABASE_URL"):
             database_url.query, keep_blank_values=True
         ).items()
     }
+    database_options = secure_postgres_options(
+        database_options,
+        require_ssl=not DEBUG,
+    )
     DATABASES = {"default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": database_url.path.lstrip("/"),
@@ -118,16 +141,22 @@ if os.environ.get("DATABASE_URL"):
         "OPTIONS": database_options,
     }}
 elif os.environ.get("POSTGRES_DB"):
+    postgres_sslmode = os.environ.get("POSTGRES_SSLMODE", "")
+    database_options = secure_postgres_options(
+        {"sslmode": postgres_sslmode} if postgres_sslmode else {},
+        require_ssl=not DEBUG,
+    )
     DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql", "NAME": os.environ["POSTGRES_DB"],
         "USER": os.environ.get("POSTGRES_USER", "postgres"), "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
         "HOST": os.environ.get("POSTGRES_HOST", "localhost"), "PORT": os.environ.get("POSTGRES_PORT", "5432"),
-        "CONN_MAX_AGE": int(os.environ.get("DATABASE_CONN_MAX_AGE", "60")), "CONN_HEALTH_CHECKS": True}}
+        "CONN_MAX_AGE": int(os.environ.get("DATABASE_CONN_MAX_AGE", "60")), "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": database_options}}
 else:
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
@@ -149,10 +178,10 @@ SECURE_SSL_REDIRECT = os.environ.get(
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = int(os.environ.get(
-    "DJANGO_SECURE_HSTS_SECONDS", "3600" if not DEBUG else "0"
+    "DJANGO_SECURE_HSTS_SECONDS", "15724800" if not DEBUG else "0"
 ))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get(
-    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", "0"
+    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", "1" if not DEBUG else "0"
 ) == "1"
 SECURE_HSTS_PRELOAD = os.environ.get(
     "DJANGO_SECURE_HSTS_PRELOAD", "0"

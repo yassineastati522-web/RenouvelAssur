@@ -4,6 +4,9 @@ from decimal import Decimal
 from io import BytesIO
 from unittest.mock import patch
 
+from config.settings import secure_postgres_options
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command, CommandError
 from django.db import connection
@@ -25,6 +28,47 @@ class HealthCheckTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class SecurityConfigurationTests(SimpleTestCase):
+    def test_password_policy_requires_at_least_twelve_characters(self):
+        with self.assertRaises(ValidationError):
+            validate_password("A7!shortPwd")
+
+        validate_password("A7!long-random-password")
+
+    def test_postgres_ssl_is_required_outside_development(self):
+        self.assertEqual(
+            secure_postgres_options({}, require_ssl=True),
+            {"sslmode": "require"},
+        )
+        self.assertEqual(
+            secure_postgres_options(
+                {"sslmode": "verify-full"},
+                require_ssl=True,
+            ),
+            {"sslmode": "verify-full"},
+        )
+        with self.assertRaises(ImproperlyConfigured):
+            secure_postgres_options(
+                {"sslmode": "disable"},
+                require_ssl=True,
+            )
+
+    def test_public_pages_receive_a_strict_content_security_policy(self):
+        response = self.client.get(reverse("login"))
+
+        policy = response.headers["Content-Security-Policy"]
+        self.assertIn("default-src 'self'", policy)
+        self.assertIn("frame-ancestors 'none'", policy)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", policy)
+
+    def test_admin_csp_keeps_django_inline_assets_compatible(self):
+        response = self.client.get(reverse("admin:login"))
+
+        policy = response.headers["Content-Security-Policy"]
+        self.assertIn("script-src 'self' 'unsafe-inline'", policy)
+        self.assertIn("style-src 'self' 'unsafe-inline'", policy)
 
 
 class MidnightSessionSecurityTests(TestCase):
@@ -74,8 +118,19 @@ class MidnightSessionSecurityTests(TestCase):
 
         response = self.client.get(reverse("dashboard"))
 
-        self.assertContains(response, "const expiresAt = Date.parse")
-        self.assertContains(response, "window.setTimeout(leaveApplication, remaining)")
+        self.assertContains(response, "data-session-expiry=")
+        self.assertContains(response, '/static/js/app.js')
+
+    def test_authenticated_pages_are_not_cached(self):
+        self.assertTrue(self.client.login(username="midnight-user", password="secret"))
+
+        response = self.client.get(reverse("dashboard"))
+
+        cache_control = response.headers["Cache-Control"]
+        self.assertIn("no-store", cache_control)
+        self.assertIn("private", cache_control)
+        self.assertEqual(response.headers["Pragma"], "no-cache")
+        self.assertEqual(response.headers["Expires"], "0")
 
     @patch("renewals.session_security.current_local_day")
     def test_session_created_before_deployment_is_logged_out_once(self, local_day):
@@ -172,6 +227,19 @@ class EnsureAdminCommandTests(TestCase):
         self.assertTrue(user.is_staff)
         self.assertTrue(user.is_superuser)
         self.assertEqual(user.role, User.Role.ADMIN)
+
+    @patch.dict(os.environ, {
+        "DJANGO_SUPERUSER_USERNAME": "weak-admin",
+        "DJANGO_SUPERUSER_PASSWORD": "short",
+    })
+    def test_weak_admin_password_is_rejected_without_creating_account(self):
+        with self.assertRaisesMessage(
+            CommandError,
+            "Mot de passe administrateur refusé",
+        ):
+            call_command("ensure_admin")
+
+        self.assertFalse(User.objects.filter(username="weak-admin").exists())
 
 
 class ImportServiceTests(TestCase):
