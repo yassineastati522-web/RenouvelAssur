@@ -4,7 +4,8 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 ## Fonctionnalités
 
-- authentification sécurisée, mots de passe d’au moins 12 caractères, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
+- authentification sécurisée, mots de passe d’au moins 12 caractères, rotation obligatoire des comptes existants, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
+- journal d’audit des connexions, imports, changements sensibles et suppressions, sans nom, téléphone, police ni commentaire client dans ses métadonnées ;
 - tableau de bord : échéances, relances, renouvellements et primes ;
 - import des échéances à venir, des bordereaux Excel et du suivi CSV/Excel des provisoires avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
 - reconnaissance des colonnes du bordereau assureur, validation, mise à jour idempotente et rapport d’erreurs ;
@@ -50,6 +51,8 @@ Trois formats métier sont reconnus :
 
 La page d’importation présente une case dédiée à chaque format et refuse un fichier lorsqu’il est déposé dans la mauvaise case.
 
+La taille est limitée à 10 Mo par défaut. L’extension ne suffit pas : la signature réelle du classeur est contrôlée, les archives Excel anormalement volumineuses sont refusées et une cellule texte ne peut pas dépasser la limite configurée.
+
 Colonnes minimales : `Police`, `Client` ou `Assuré`, et `Date Échéance` ou `Date Fin`. Les en-têtes du bordereau fourni sont reconnus, notamment :
 
 - `POLICE`, `Nature Evenement`, `CLIENT`, `NUMERO_CIN` ;
@@ -91,6 +94,13 @@ python -m piptools compile --generate-hashes --strip-extras --output-file requir
 ## PostgreSQL et production
 
 Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, `DJANGO_SECRET_KEY` est obligatoire, `DJANGO_DEBUG=0` active HTTPS, HSTS, la protection anti-bruteforce, la politique CSP et l’interdiction de mise en cache des pages authentifiées. PostgreSQL refuse alors les modes SSL faibles et utilise au minimum `sslmode=require`. Une sauvegarde régulière de Neon reste nécessaire. Le fichier `.env` n’est jamais versionné.
+
+Les procédures d’exploitation sont documentées dans :
+
+- [`docs/SAUVEGARDE_RESTAURATION.md`](docs/SAUVEGARDE_RESTAURATION.md) pour créer, contrôler et restaurer une sauvegarde PostgreSQL/Neon ;
+- [`docs/CONSERVATION_DONNEES.md`](docs/CONSERVATION_DONNEES.md) pour les durées de conservation à valider avec l’agence et son conseil CNDP.
+
+Le journal d’audit est conservé 730 jours par défaut. Une simulation de purge est disponible avec `python manage.py prune_audit_events`; la suppression exige explicitement l’option `--confirm`.
 
 ## Déploiement sur Render avec Neon
 

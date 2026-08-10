@@ -2,10 +2,16 @@ from datetime import datetime, time, timedelta
 
 from django.conf import settings
 from django.contrib.auth import logout
-from django.contrib.auth.signals import user_logged_in
+from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.dispatch import receiver
+from django.http import HttpResponseForbidden
+from django.shortcuts import redirect
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.cache import patch_cache_control
+
+from .audit import record_audit_event
+from .models import AuditEvent
 
 
 SESSION_DAY_KEY = "_renewal_login_day"
@@ -37,6 +43,27 @@ def expire_session_at_midnight(sender, request, user, **kwargs):
         return
     request.session[SESSION_DAY_KEY] = current_local_day().isoformat()
     request.session.set_expiry(next_local_midnight())
+    record_audit_event(
+        actor=user,
+        action=AuditEvent.Action.LOGIN_SUCCEEDED,
+    )
+
+
+@receiver(user_login_failed)
+def record_failed_login(sender, credentials, request, **kwargs):
+    """Conserve l'échec sans recopier l'identifiant ni le mot de passe."""
+    record_audit_event(
+        actor=None,
+        action=AuditEvent.Action.LOGIN_FAILED,
+    )
+
+
+@receiver(user_logged_out)
+def record_logout(sender, request, user, **kwargs):
+    record_audit_event(
+        actor=user,
+        action=AuditEvent.Action.LOGOUT,
+    )
 
 
 class LogoutAfterMidnightMiddleware:
@@ -50,6 +77,39 @@ class LogoutAfterMidnightMiddleware:
             login_day = request.session.get(SESSION_DAY_KEY)
             if login_day != current_local_day().isoformat():
                 logout(request)
+        return self.get_response(request)
+
+
+class RequirePasswordChangeMiddleware:
+    """Force une rotation unique des comptes signalés par la migration."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.user.is_authenticated and request.user.must_change_password:
+            allowed_paths = {
+                reverse("password_change"),
+                reverse("logout"),
+            }
+            if request.path not in allowed_paths:
+                return redirect("password_change")
+        return self.get_response(request)
+
+
+class AgencyAdminAccessMiddleware:
+    """Refuse l'administration Django aux comptes qui gardent le rôle Agent."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if (
+            request.path.startswith("/admin/")
+            and request.user.is_authenticated
+            and not request.user.is_agency_admin
+        ):
+            return HttpResponseForbidden("Accès réservé aux administrateurs.")
         return self.get_response(request)
 
 

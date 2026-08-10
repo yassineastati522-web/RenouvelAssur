@@ -187,7 +187,8 @@ p {
 }
 
 .sidebar nav svg,
-.user-card button svg {
+.user-card button svg,
+.user-card .account-action svg {
   width: 19px;
   height: 19px;
   flex: 0 0 19px;
@@ -247,7 +248,8 @@ p {
   margin: 0;
 }
 
-.user-card button {
+.user-card button,
+.user-card .account-action {
   display: grid;
   width: 34px;
   height: 34px;
@@ -258,11 +260,43 @@ p {
   background: transparent;
   color: rgba(240, 249, 246, .85);
   cursor: pointer;
+  text-decoration: none;
 }
 
-.user-card button:hover {
+.user-card button:hover,
+.user-card .account-action:hover {
   background: rgba(255, 255, 255, .1);
   color: #fff;
+}
+
+.password-panel {
+  max-width: 720px;
+}
+
+.password-panel form {
+  max-width: 560px;
+}
+
+.password-panel .btn {
+  margin-top: 24px;
+}
+
+.form-help {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.form-help ul {
+  margin: 5px 0 0;
+  padding-left: 18px;
+}
+
+.field-error {
+  margin-top: 6px;
+  color: var(--red);
+  font-size: 12px;
 }
 
 .main {

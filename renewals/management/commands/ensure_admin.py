@@ -5,6 +5,9 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
+from renewals.audit import record_audit_event
+from renewals.models import AuditEvent
+
 
 class Command(BaseCommand):
     help = "Crée le premier administrateur depuis les variables d'environnement, si nécessaire."
@@ -50,6 +53,21 @@ class Command(BaseCommand):
 
         if changed_fields:
             user.save(update_fields=changed_fields)
+
+        record_audit_event(
+            actor=None,
+            action=(
+                AuditEvent.Action.USER_CREATED
+                if created
+                else AuditEvent.Action.USER_UPDATED
+            ),
+            target=user,
+            details={
+                "changed_fields": [
+                    field for field in changed_fields if field != "password"
+                ],
+            },
+        )
 
         action = "créé" if created else "mis à jour et vérifié"
         self.stdout.write(self.style.SUCCESS(f"Administrateur {username} {action}."))

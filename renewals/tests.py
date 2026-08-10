@@ -1,7 +1,7 @@
 import os
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from io import BytesIO
+from io import BytesIO, StringIO
 from unittest.mock import patch
 
 from config.settings import secure_postgres_options
@@ -11,13 +11,15 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command, CommandError
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
+from django.test import Client as DjangoTestClient
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook
 
-from .models import CallInteraction, Client, Contract, ImportBatch, Termination, User
+from .audit import record_audit_event
+from .models import AuditEvent, CallInteraction, Client, Contract, ImportBatch, Termination, User
 from .session_security import SESSION_DAY_KEY
 from .services import import_contracts
 
@@ -169,6 +171,164 @@ class LoginThrottlingTests(TestCase):
             "Connexion temporairement bloquée",
             status_code=429,
         )
+
+
+class AccessControlAndAuditTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            "security-agent",
+            password="OldStrongPassword!42",
+            role=User.Role.AGENT,
+        )
+
+    def test_flagged_account_must_change_password_before_using_the_app(self):
+        self.user.must_change_password = True
+        self.user.save(update_fields=["must_change_password"])
+        self.client.force_login(self.user)
+
+        blocked = self.client.get(reverse("dashboard"))
+        self.assertRedirects(blocked, reverse("password_change"), fetch_redirect_response=False)
+
+        changed = self.client.post(reverse("password_change"), {
+            "old_password": "OldStrongPassword!42",
+            "new_password1": "NewUniquePassword!84",
+            "new_password2": "NewUniquePassword!84",
+        })
+
+        self.assertRedirects(changed, reverse("dashboard"), fetch_redirect_response=False)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.must_change_password)
+        self.assertTrue(self.user.check_password("NewUniquePassword!84"))
+        self.assertTrue(AuditEvent.objects.filter(
+            actor=self.user,
+            action=AuditEvent.Action.PASSWORD_CHANGED,
+        ).exists())
+        self.assertEqual(self.client.get(reverse("dashboard")).status_code, 200)
+
+    def test_password_change_rejects_a_post_without_csrf_token(self):
+        csrf_client = DjangoTestClient(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user)
+
+        response = csrf_client.post(reverse("password_change"), {
+            "old_password": "OldStrongPassword!42",
+            "new_password1": "NewUniquePassword!84",
+            "new_password2": "NewUniquePassword!84",
+        })
+
+        self.assertEqual(response.status_code, 403)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("OldStrongPassword!42"))
+
+    def test_password_change_invalidates_other_sessions(self):
+        first_session = DjangoTestClient()
+        other_session = DjangoTestClient()
+        self.assertTrue(first_session.login(
+            username=self.user.username,
+            password="OldStrongPassword!42",
+        ))
+        self.assertTrue(other_session.login(
+            username=self.user.username,
+            password="OldStrongPassword!42",
+        ))
+
+        response = first_session.post(reverse("password_change"), {
+            "old_password": "OldStrongPassword!42",
+            "new_password1": "AnotherUniquePassword!63",
+            "new_password2": "AnotherUniquePassword!63",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        rejected = other_session.get(reverse("dashboard"))
+        self.assertRedirects(
+            rejected,
+            f"{reverse('login')}?next={reverse('dashboard')}",
+            fetch_redirect_response=False,
+        )
+
+    def test_staff_agent_is_still_forbidden_from_django_admin(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("admin:index"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_password_reset_forces_the_user_to_choose_a_new_password(self):
+        administrator = User.objects.create_superuser(
+            "security-admin",
+            password="AdministratorPassword!42",
+            role=User.Role.ADMIN,
+        )
+        self.client.force_login(administrator)
+
+        response = self.client.post(
+            reverse("admin:auth_user_password_change", args=[self.user.pk]),
+            {
+                "password1": "TemporaryPassword!53",
+                "password2": "TemporaryPassword!53",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.must_change_password)
+        event = AuditEvent.objects.filter(
+            action=AuditEvent.Action.USER_UPDATED,
+            target_id=str(self.user.pk),
+        ).latest("pk")
+        self.assertEqual(event.actor, administrator)
+        self.assertEqual(event.details, {"changed_fields": ["password_reset"]})
+
+    def test_login_audit_never_stores_submitted_credentials(self):
+        self.client.post(reverse("login"), {
+            "username": self.user.username,
+            "password": "submitted-secret",
+        })
+
+        event = AuditEvent.objects.filter(
+            action=AuditEvent.Action.LOGIN_FAILED,
+        ).latest("pk")
+        self.assertEqual(event.details, {})
+        self.assertEqual(event.target_id, "")
+        self.assertNotIn(self.user.username, str(event.details))
+        self.assertNotIn("submitted-secret", str(event.details))
+
+    def test_audit_helper_discards_unapproved_personal_fields(self):
+        event = record_audit_event(
+            actor=self.user,
+            action=AuditEvent.Action.CLIENT_UPDATED,
+            target=self.user,
+            details={
+                "changed_fields": ["phone"],
+                "phone": "0612345678",
+                "policy_number": "SECRET-POLICY",
+            },
+        )
+
+        self.assertEqual(event.details, {"changed_fields": ["phone"]})
+        self.assertNotIn("0612345678", str(event.details))
+        self.assertNotIn("SECRET-POLICY", str(event.details))
+
+
+class AuditRetentionCommandTests(TestCase):
+    def test_purge_is_a_simulation_until_confirmed(self):
+        user = User.objects.create_user("audit-owner", password="secret")
+        event = AuditEvent.objects.create(
+            actor=user,
+            action=AuditEvent.Action.LOGIN_SUCCEEDED,
+        )
+        AuditEvent.objects.filter(pk=event.pk).update(
+            occurred_at=timezone.now() - timedelta(days=800),
+        )
+        output = StringIO()
+
+        call_command("prune_audit_events", days=730, stdout=output)
+        self.assertTrue(AuditEvent.objects.filter(pk=event.pk).exists())
+        self.assertIn("Simulation", output.getvalue())
+
+        call_command("prune_audit_events", days=730, confirm=True, stdout=StringIO())
+        self.assertFalse(AuditEvent.objects.filter(pk=event.pk).exists())
 
 
 class DemoCommandSecurityTests(TestCase):
@@ -1539,6 +1699,35 @@ class TerminationPremiumRepairMigrationTests(TransactionTestCase):
         )
 
 
+class SecurityPhaseMigrationTests(TransactionTestCase):
+    migrate_from = ("renewals", "0017_repair_post_import_terminations")
+    migrate_to = ("renewals", "0018_auditevent_user_must_change_password")
+
+    def test_migration_flags_every_active_existing_account(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_from])
+        old_apps = executor.loader.project_state([self.migrate_from]).apps
+        UserModel = old_apps.get_model("renewals", "User")
+        active = UserModel.objects.create_user(
+            username="existing-active",
+            password="OldStrongPassword!42",
+            is_active=True,
+        )
+        inactive = UserModel.objects.create_user(
+            username="existing-inactive",
+            password="OldStrongPassword!42",
+            is_active=False,
+        )
+
+        executor = MigrationExecutor(connection)
+        executor.migrate([self.migrate_to])
+        new_apps = executor.loader.project_state([self.migrate_to]).apps
+        UserModel = new_apps.get_model("renewals", "User")
+
+        self.assertTrue(UserModel.objects.get(pk=active.pk).must_change_password)
+        self.assertFalse(UserModel.objects.get(pk=inactive.pk).must_change_password)
+
+
 class ApplicationFlowTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("agent", password="secret", role=User.Role.AGENT)
@@ -1787,6 +1976,12 @@ class ApplicationFlowTests(TestCase):
         self.assertFalse(CallInteraction.objects.filter(pk=interaction.pk).exists())
         self.assertFalse(Termination.objects.filter(pk=termination.pk).exists())
         self.assertTrue(Client.objects.filter(pk=self.client_obj.pk).exists())
+        deletion_event = AuditEvent.objects.get(
+            action=AuditEvent.Action.CONTRACT_DELETED,
+        )
+        self.assertEqual(deletion_event.actor, self.user)
+        self.assertEqual(deletion_event.target_id, str(self.contract.pk))
+        self.assertEqual(deletion_event.details, {})
 
     def test_call_form_only_offers_the_three_requested_results(self):
         response = self.client.get(reverse("contract_detail", args=[self.contract.pk]))
@@ -2419,6 +2614,13 @@ class ExcelImportFlowTests(TestCase):
         })
         self.assertRedirects(response, reverse("import_report", args=[1]))
         self.assertEqual(Contract.objects.get().policy_number, "XLSX-001")
+        audit_event = AuditEvent.objects.get(
+            action=AuditEvent.Action.IMPORT_COMPLETED,
+        )
+        self.assertEqual(audit_event.actor, self.admin)
+        self.assertEqual(audit_event.target_type, "renewals.importbatch")
+        self.assertEqual(audit_event.details["import_type"], "bordereau")
+        self.assertNotIn("filename", audit_event.details)
 
     def test_insurer_upcoming_xls_is_imported_from_the_web_form(self):
         upload = excel_upload([
@@ -2489,6 +2691,39 @@ class ExcelImportFlowTests(TestCase):
         })
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Impossible de lire ce fichier Excel")
+
+    @override_settings(MAX_IMPORT_FILE_SIZE_BYTES=1024 * 1024)
+    def test_file_over_the_size_limit_is_rejected_before_parsing(self):
+        upload = SimpleUploadedFile(
+            "oversized.xlsx",
+            b"PK\x03\x04" + (b"x" * (1024 * 1024)),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.BORDEREAU,
+            "bordereau-file": upload,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "ne doit pas dépasser 1 Mo")
+        self.assertFalse(ImportBatch.objects.exists())
+
+    def test_binary_file_renamed_as_provisional_csv_is_rejected(self):
+        upload = SimpleUploadedFile(
+            "provisoires.csv",
+            b"Police;Client\x00;Date",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(reverse("import_view"), {
+            "import_kind": ImportBatch.ImportType.PROVISIONAL,
+            "provisional-file": upload,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "données binaires invalides")
+        self.assertFalse(ImportBatch.objects.exists())
 
     @patch("renewals.services.MAX_IMPORT_ROWS_PER_SHEET", 2)
     def test_excel_over_the_row_limit_is_rejected_before_import(self):
