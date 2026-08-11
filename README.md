@@ -4,7 +4,7 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 
 ## Fonctionnalités
 
-- authentification sécurisée, mots de passe d’au moins 12 caractères, rotation obligatoire des comptes existants, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
+- authentification sécurisée, mots de passe d’au moins 12 caractères, rotation obligatoire des comptes existants, rôles Administrateur / Agent, conservation des échecs de connexion, blocage de 15 minutes après huit échecs et déconnexion automatique à minuit ;
 - double authentification TOTP obligatoire pour les administrateurs en production, avec huit codes de secours à usage unique ;
 - journal d’audit des connexions, imports, changements sensibles et suppressions, sans nom, téléphone, police ni commentaire client dans ses métadonnées ;
 - révocation manuelle des sessions, réinitialisation MFA et export CSV protégé du journal depuis l’administration ;

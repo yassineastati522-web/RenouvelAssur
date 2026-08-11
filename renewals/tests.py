@@ -5,6 +5,7 @@ from io import BytesIO, StringIO
 from unittest.mock import patch
 
 from config.settings import secure_postgres_options
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -152,9 +153,13 @@ class LoginThrottlingTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("protected-user", password="secret")
 
-    def test_account_is_temporarily_locked_after_five_failures(self):
+    def test_lockout_uses_eight_failures_and_fifteen_minutes(self):
+        self.assertEqual(settings.AXES_FAILURE_LIMIT, 8)
+        self.assertEqual(settings.AXES_COOLOFF_TIME, timedelta(minutes=15))
+
+    def test_account_is_temporarily_locked_after_eight_failures(self):
         login_url = reverse("login")
-        for _attempt in range(5):
+        for _attempt in range(8):
             self.client.post(login_url, {
                 "username": self.user.username,
                 "password": "incorrect",
@@ -170,6 +175,34 @@ class LoginThrottlingTests(TestCase):
             response,
             "Connexion temporairement bloquée",
             status_code=429,
+        )
+
+    def test_failed_logins_are_kept_after_a_later_success(self):
+        from axes.models import AccessAttempt, AccessFailureLog
+
+        login_url = reverse("login")
+        self.client.post(login_url, {
+            "username": self.user.username,
+            "password": "incorrect",
+        })
+
+        self.assertEqual(
+            AccessFailureLog.objects.filter(username=self.user.username).count(),
+            1,
+        )
+
+        response = self.client.post(login_url, {
+            "username": self.user.username,
+            "password": "secret",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            AccessAttempt.objects.filter(username=self.user.username).exists()
+        )
+        self.assertEqual(
+            AccessFailureLog.objects.filter(username=self.user.username).count(),
+            1,
         )
 
 
