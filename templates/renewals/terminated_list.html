@@ -21,7 +21,7 @@
         <tr>
           <th>Assuré</th>
           <th>Police</th>
-          <th>Contrats résiliés du client</th>
+          <th class="terminated-count-column">Contrats résiliés du client</th>
           <th>Date</th>
           <th>Motif</th>
           <th>Prime perdue</th>
@@ -33,7 +33,7 @@
         <tr>
           <td><a class="client-name" href="{% url 'contract_detail' item.contract.pk %}">{{ item.contract.client.name }}</a></td>
           <td>{{ item.contract.policy_number }}</td>
-          <td><span class="status">{{ item.client_terminated_count }} contrat{{ item.client_terminated_count|pluralize }}</span></td>
+          <td class="terminated-count-column"><span class="status">{{ item.client_terminated_count }} contrat{{ item.client_terminated_count|pluralize }}</span></td>
           <td>{{ item.date|date:"d/m/Y" }}</td>
           <td>{{ item.reason|default:"Non renseigné" }}</td>
           <td>

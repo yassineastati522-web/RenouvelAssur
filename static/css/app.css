@@ -769,6 +769,10 @@ td small {
   font-size: 11px;
 }
 
+.terminated-count-column {
+  text-align: center;
+}
+
 .client-name {
   color: var(--ink);
   font-weight: 700;
