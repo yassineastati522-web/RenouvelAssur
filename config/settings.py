@@ -68,11 +68,12 @@ AUTHENTICATION_BACKENDS = [
     "axes.backends.AxesStandaloneBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
-AXES_FAILURE_LIMIT = 5
-AXES_COOLOFF_TIME = timedelta(minutes=30)
+AXES_FAILURE_LIMIT = 8
+AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_LOCKOUT_PARAMETERS = ["username"]
 AXES_CLIENT_IP_CALLABLE = "renewals.session_security.discard_client_ip"
 AXES_RESET_ON_SUCCESS = True
+AXES_ENABLE_ACCESS_FAILURE_LOG = True
 AXES_LOCKOUT_TEMPLATE = "registration/lockout.html"
 AXES_HTTP_RESPONSE_CODE = 429
 AXES_ENABLED = os.environ.get(
