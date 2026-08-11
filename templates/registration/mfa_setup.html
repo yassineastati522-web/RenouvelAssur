@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Activer la double authentification — RenouvelAssur{% endblock %}
+{% block content %}
+<section class="page-head compact-head">
+  <div>
+    <span class="eyebrow">SÉCURITÉ DU COMPTE</span>
+    <h1>Activer la double authentification</h1>
+    <p>Cette étape est obligatoire pour les administrateurs.</p>
+  </div>
+</section>
+<section class="security-card">
+  <div class="security-steps">
+    <div>
+      <b>1. Scannez ce QR code</b>
+      <p>Utilisez une application TOTP comme Google Authenticator, Microsoft Authenticator ou 2FAS.</p>
+      <img class="mfa-qr" src="data:image/png;base64,{{ qr_data }}" alt="QR code de configuration de la double authentification">
+      <details>
+        <summary>Saisie manuelle</summary>
+        <code class="mfa-secret">{{ manual_secret }}</code>
+      </details>
+    </div>
+    <form method="post" class="stack-form">
+      {% csrf_token %}
+      <b>2. Confirmez le code affiché</b>
+      <p>Le code change toutes les 30 secondes.</p>
+      {{ form.otp_token.label_tag }}
+      {{ form.otp_token }}
+      {% for error in form.otp_token.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+      <button class="btn primary" type="submit">Activer la protection</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

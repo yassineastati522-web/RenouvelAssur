@@ -1,8 +1,12 @@
 from datetime import datetime, time, timedelta
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
+from axes.signals import user_locked_out
+from django_otp.forms import otp_verification_failed
+from django_otp.plugins.otp_totp.models import TOTPDevice
 from django.dispatch import receiver
 from django.http import HttpResponseForbidden
 from django.shortcuts import redirect
@@ -12,6 +16,7 @@ from django.utils.cache import patch_cache_control
 
 from .audit import record_audit_event
 from .models import AuditEvent
+from .security_alerts import report_security_alert
 
 
 SESSION_DAY_KEY = "_renewal_login_day"
@@ -66,6 +71,20 @@ def record_logout(sender, request, user, **kwargs):
     )
 
 
+@receiver(user_locked_out)
+def record_account_lockout(sender, request, username, ip_address, **kwargs):
+    report_security_alert("account_locked")
+
+
+@receiver(otp_verification_failed)
+def record_failed_otp(sender, user, **kwargs):
+    report_security_alert(
+        "mfa_verification_failed",
+        actor=user,
+        action=AuditEvent.Action.MFA_FAILED,
+    )
+
+
 class LogoutAfterMidnightMiddleware:
     """Reject an authenticated session as soon as its login day has ended."""
 
@@ -97,6 +116,42 @@ class RequirePasswordChangeMiddleware:
         return self.get_response(request)
 
 
+class RequireAdminMFAMiddleware:
+    """Impose un TOTP vérifié aux administrateurs lorsque l'option est active."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if (
+            settings.ADMIN_MFA_REQUIRED
+            and request.user.is_authenticated
+            and request.user.is_agency_admin
+        ):
+            setup_path = reverse("mfa_setup")
+            verify_path = reverse("mfa_verify")
+            allowed_paths = {
+                setup_path,
+                verify_path,
+                reverse("password_change"),
+                reverse("logout"),
+                reverse("health_check"),
+            }
+            if request.path not in allowed_paths and not request.user.is_verified():
+                destination = (
+                    verify_path
+                    if TOTPDevice.objects.filter(
+                        user=request.user,
+                        confirmed=True,
+                    ).exists()
+                    else setup_path
+                )
+                return redirect(
+                    f"{destination}?{urlencode({'next': request.get_full_path()})}"
+                )
+        return self.get_response(request)
+
+
 class AgencyAdminAccessMiddleware:
     """Refuse l'administration Django aux comptes qui gardent le rôle Agent."""
 
@@ -109,6 +164,10 @@ class AgencyAdminAccessMiddleware:
             and request.user.is_authenticated
             and not request.user.is_agency_admin
         ):
+            report_security_alert(
+                "admin_access_denied",
+                actor=request.user,
+            )
             return HttpResponseForbidden("Accès réservé aux administrateurs.")
         return self.get_response(request)
 

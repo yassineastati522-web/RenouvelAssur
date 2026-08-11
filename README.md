@@ -5,7 +5,10 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 ## Fonctionnalités
 
 - authentification sécurisée, mots de passe d’au moins 12 caractères, rotation obligatoire des comptes existants, rôles Administrateur / Agent, blocage temporaire après cinq échecs et déconnexion automatique à minuit ;
+- double authentification TOTP obligatoire pour les administrateurs en production, avec huit codes de secours à usage unique ;
 - journal d’audit des connexions, imports, changements sensibles et suppressions, sans nom, téléphone, police ni commentaire client dans ses métadonnées ;
+- révocation manuelle des sessions, réinitialisation MFA et export CSV protégé du journal depuis l’administration ;
+- alertes de sécurité et surveillance Sentry facultative avec suppression du corps des requêtes, cookies, paramètres, identité et en-têtes sensibles ;
 - tableau de bord : échéances, relances, renouvellements et primes ;
 - import des échéances à venir, des bordereaux Excel et du suivi CSV/Excel des provisoires avec détection automatique du format, de la feuille et de la ligne d’en-têtes ;
 - reconnaissance des colonnes du bordereau assureur, validation, mise à jour idempotente et rapport d’erreurs ;
@@ -95,10 +98,16 @@ python -m piptools compile --generate-hashes --strip-extras --output-file requir
 
 Copier `.env.example` vers `.env`, charger les variables dans l’environnement et définir `POSTGRES_*`. En production, `DJANGO_SECRET_KEY` est obligatoire, `DJANGO_DEBUG=0` active HTTPS, HSTS, la protection anti-bruteforce, la politique CSP et l’interdiction de mise en cache des pages authentifiées. PostgreSQL refuse alors les modes SSL faibles et utilise au minimum `sslmode=require`. Une sauvegarde régulière de Neon reste nécessaire. Le fichier `.env` n’est jamais versionné.
 
+En production, `DJANGO_ADMIN_MFA_REQUIRED=1` impose la double authentification aux administrateurs. À leur première connexion après déploiement, ils scannent un QR code avec une application TOTP et sauvegardent leurs codes de secours. Un administrateur peut ensuite révoquer les sessions ou réinitialiser la MFA d’un compte depuis la liste **Utilisateurs** de l’administration.
+
+La surveillance d’erreurs est facultative. Pour l’activer, créer un projet Django dans Sentry puis ajouter `SENTRY_DSN` directement dans les variables secrètes de Render. Ne jamais écrire le DSN dans GitHub. `SENTRY_TRACES_SAMPLE_RATE=0` désactive par défaut le traçage de performance afin de minimiser les données envoyées.
+
 Les procédures d’exploitation sont documentées dans :
 
 - [`docs/SAUVEGARDE_RESTAURATION.md`](docs/SAUVEGARDE_RESTAURATION.md) pour créer, contrôler et restaurer une sauvegarde PostgreSQL/Neon ;
 - [`docs/CONSERVATION_DONNEES.md`](docs/CONSERVATION_DONNEES.md) pour les durées de conservation à valider avec l’agence et son conseil CNDP.
+- [`docs/PLAN_REPONSE_INCIDENTS.md`](docs/PLAN_REPONSE_INCIDENTS.md) pour détecter, contenir et traiter un incident sans effacer les preuves ;
+- [`docs/DOSSIER_CNDP.md`](docs/DOSSIER_CNDP.md) pour réunir les informations techniques et contractuelles avant validation par la CNDP ou un juriste marocain.
 
 Le journal d’audit est conservé 730 jours par défaut. Une simulation de purge est disponible avec `python manage.py prune_audit_events`; la suppression exige explicitement l’option `--confirm`.
 
