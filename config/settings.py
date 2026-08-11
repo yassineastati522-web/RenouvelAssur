@@ -43,6 +43,9 @@ INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
     "axes",
+    "django_otp",
+    "django_otp.plugins.otp_totp",
+    "django_otp.plugins.otp_static",
     "renewals",
 ]
 MIDDLEWARE = [
@@ -51,9 +54,11 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware", "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django_otp.middleware.OTPMiddleware",
     "renewals.session_security.ApplicationSecurityHeadersMiddleware",
     "renewals.session_security.LogoutAfterMidnightMiddleware",
     "renewals.session_security.RequirePasswordChangeMiddleware",
+    "renewals.session_security.RequireAdminMFAMiddleware",
     "renewals.session_security.AgencyAdminAccessMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -183,6 +188,13 @@ MAX_IMPORT_CELL_TEXT_LENGTH = int(os.environ.get(
 AUDIT_LOG_RETENTION_DAYS = int(os.environ.get(
     "AUDIT_LOG_RETENTION_DAYS", "730"
 ))
+ADMIN_MFA_REQUIRED = os.environ.get(
+    "DJANGO_ADMIN_MFA_REQUIRED", "1" if not DEBUG else "0"
+) == "1"
+OTP_TOTP_ISSUER = "RenouvelAssur"
+OTP_TOTP_THROTTLE_FACTOR = 2
+OTP_STATIC_THROTTLE_FACTOR = 2
+OTP_ADMIN_HIDE_SENSITIVE_DATA = True
 
 SECURE_SSL_REDIRECT = os.environ.get(
     "DJANGO_SECURE_SSL_REDIRECT", "1" if not DEBUG else "0"
@@ -202,3 +214,29 @@ SECURE_HSTS_PRELOAD = os.environ.get(
 TERMINATION_EVENTS = [v.strip() for v in os.environ.get(
     "TERMINATION_EVENTS", "Résiliation,Annulation,Avenant de résiliation,Ristourne"
 ).split(",") if v.strip()]
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+SENTRY_ENVIRONMENT = os.environ.get(
+    "SENTRY_ENVIRONMENT", "production" if IS_HOSTED else "development"
+)
+try:
+    SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get(
+        "SENTRY_TRACES_SAMPLE_RATE", "0"
+    ))
+except ValueError as exc:
+    raise ImproperlyConfigured(
+        "SENTRY_TRACES_SAMPLE_RATE doit être un nombre entre 0 et 1."
+    ) from exc
+if not 0 <= SENTRY_TRACES_SAMPLE_RATE <= 1:
+    raise ImproperlyConfigured(
+        "SENTRY_TRACES_SAMPLE_RATE doit être compris entre 0 et 1."
+    )
+
+if SENTRY_DSN:
+    from .monitoring import initialize_sentry
+
+    initialize_sentry(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+    )

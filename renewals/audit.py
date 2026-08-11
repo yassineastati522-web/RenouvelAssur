@@ -7,11 +7,13 @@ SAFE_DETAIL_KEYS = {
     "added_rows",
     "changed_fields",
     "import_type",
+    "exported_count",
     "new_status",
     "outcome",
     "previous_status",
     "provisional_count",
     "rejected_rows",
+    "session_count",
     "updated_rows",
 }
 

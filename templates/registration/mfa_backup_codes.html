@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}Codes de secours — RenouvelAssur{% endblock %}
+{% block content %}
+<section class="page-head compact-head">
+  <div>
+    <span class="eyebrow">DOUBLE AUTHENTIFICATION ACTIVÉE</span>
+    <h1>Conservez vos codes de secours</h1>
+    <p>Chaque code ne fonctionne qu’une seule fois. Ils ne seront plus affichés.</p>
+  </div>
+</section>
+<section class="security-card narrow-security-card">
+  <div class="backup-codes" aria-label="Codes de secours">
+    {% for code in backup_codes %}<code>{{ code }}</code>{% endfor %}
+  </div>
+  <p>Copiez-les dans un gestionnaire de mots de passe ou imprimez-les et conservez-les dans un lieu sûr.</p>
+  <a class="btn primary" href="{% url 'dashboard' %}">Continuer vers le tableau de bord</a>
+</section>
+{% endblock %}

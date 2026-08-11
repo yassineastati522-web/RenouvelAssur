@@ -1,7 +1,80 @@
 from django import forms
+from django.conf import settings
+from django.contrib.auth.forms import AuthenticationForm
+from django.db import transaction
+from django_otp import devices_for_user
+from django_otp.forms import otp_verification_failed
+from django_otp.plugins.otp_static.models import StaticDevice
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from .models import CallInteraction, Client, QUICK_CALL_RESULTS
 from .services import validate_import_file
+
+
+class AgencyAuthenticationForm(AuthenticationForm):
+    """Ajoute un second facteur seulement aux administrateurs déjà équipés."""
+
+    otp_token = forms.CharField(
+        label="Code de sécurité",
+        required=False,
+        widget=forms.TextInput(attrs={
+            "autocomplete": "one-time-code",
+            "inputmode": "numeric",
+        }),
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        user = self.get_user()
+        if (
+            settings.ADMIN_MFA_REQUIRED
+            and user is not None
+            and user.is_agency_admin
+            and TOTPDevice.objects.filter(user=user, confirmed=True).exists()
+        ):
+            self._verify_admin_token(user, cleaned.get("otp_token", ""))
+        return cleaned
+
+    def _verify_admin_token(self, user, token):
+        if not token:
+            raise forms.ValidationError(
+                "Le code de sécurité administrateur est obligatoire.",
+                code="otp_required",
+            )
+        token = token.strip().replace(" ", "")
+        with transaction.atomic():
+            devices = list(devices_for_user(
+                user,
+                confirmed=True,
+                for_verify=True,
+            ))
+            expected_type = (
+                TOTPDevice
+                if token.isdigit() and len(token) in {6, 8}
+                else StaticDevice
+            )
+            for device in devices:
+                if isinstance(device, expected_type) and device.verify_token(token):
+                    user.otp_device = device
+                    return
+        otp_verification_failed.send(sender=self.__class__, user=user)
+        raise forms.ValidationError(
+            "Le code de sécurité est incorrect ou temporairement bloqué.",
+            code="otp_invalid",
+        )
+
+
+class MFAActivationForm(forms.Form):
+    otp_token = forms.CharField(
+        label="Code à 6 chiffres",
+        min_length=6,
+        max_length=8,
+        widget=forms.TextInput(attrs={
+            "autocomplete": "one-time-code",
+            "inputmode": "numeric",
+            "placeholder": "000000",
+        }),
+    )
 
 
 class ImportForm(forms.Form):

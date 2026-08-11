@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block title %}Vérification de sécurité — RenouvelAssur{% endblock %}
+{% block content %}
+<section class="page-head compact-head">
+  <div>
+    <span class="eyebrow">VÉRIFICATION ADMINISTRATEUR</span>
+    <h1>Confirmez votre identité</h1>
+    <p>Entrez le code de votre application ou un code de secours.</p>
+  </div>
+</section>
+<section class="security-card narrow-security-card">
+  <form method="post" class="stack-form">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next }}">
+    {% if form.non_field_errors %}<div class="alert error">Code incorrect ou temporairement bloqué.</div>{% endif %}
+    <label for="id_otp_device">Méthode</label>
+    {{ form.otp_device }}
+    <label for="id_otp_token">Code de sécurité</label>
+    {{ form.otp_token }}
+    <button class="btn primary" type="submit">Vérifier</button>
+  </form>
+</section>
+{% endblock %}

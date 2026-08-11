@@ -20,12 +20,18 @@ services:
         value: "15724800"
       - key: DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
         value: "1"
+      - key: DJANGO_ADMIN_MFA_REQUIRED
+        value: "1"
       - key: MAX_IMPORT_FILE_SIZE_BYTES
         value: "10485760"
       - key: MAX_IMPORT_CELL_TEXT_LENGTH
         value: "10000"
       - key: AUDIT_LOG_RETENTION_DAYS
         value: "730"
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0"
       - key: DJANGO_ALLOWED_HOSTS
         value: app.renouvelassur.org,renouvelassur.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS

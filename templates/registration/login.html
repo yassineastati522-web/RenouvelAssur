@@ -32,7 +32,7 @@
       <h2>Heureux de vous revoir</h2>
       <p>Connectez-vous pour accéder à votre espace.</p>
       {% if form.errors %}
-        <div class="alert error">Identifiants incorrects. Veuillez réessayer.</div>
+        <div class="alert error">Identifiants ou code de sécurité incorrects. Veuillez réessayer.</div>
       {% endif %}
       <div class="login-field">
         <label for="id_username">Nom d’utilisateur</label>
@@ -41,6 +41,10 @@
       <div class="login-field">
         <label for="id_password">Mot de passe</label>
         <input id="id_password" type="password" name="password" autocomplete="current-password" required placeholder="••••••••">
+      </div>
+      <div class="login-field">
+        <label for="id_otp_token">Code de sécurité <span class="optional">(administrateurs)</span></label>
+        <input id="id_otp_token" type="text" name="otp_token" autocomplete="one-time-code" inputmode="numeric" maxlength="16" placeholder="Code à 6 chiffres ou code de secours">
       </div>
       <button class="btn primary wide login-submit" type="submit">
         <span>Se connecter</span>
