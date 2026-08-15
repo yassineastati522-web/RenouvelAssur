@@ -1,14 +1,18 @@
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
+
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import transaction
 from django.db.models import Case, Count, DateField, F, OuterRef, Prefetch, Q, Subquery, Sum, When
-from django.http import HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from .audit import record_audit_event
 from .forms import (
     ChecklistDateFilterForm,
@@ -62,6 +66,97 @@ def apply_search(qs, request):
 
 def paginate(request, qs, per_page=25):
     return Paginator(qs, per_page).get_page(request.GET.get("page"))
+
+
+def _excel_safe_text(value):
+    text = "" if value is None else str(value)
+    if text.lstrip(" \t\r\n").startswith(("=", "+", "-", "@")):
+        return f"'{text}"
+    return text
+
+
+def export_expired_contracts(qs, date_from, date_to):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Non renouvelés"
+    headers = [
+        "Assuré",
+        "Téléphone",
+        "Police",
+        "Quittance",
+        "Marque",
+        "Immatriculation",
+        "Prime TTC (MAD)",
+        "Date d'échéance",
+        "Statut",
+        "Dernier appel",
+        "Date du dernier appel",
+        "Agent",
+    ]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="08765F")
+
+    for contract in qs.order_by("end_date", "client__name", "pk"):
+        last_interaction = contract.last_interaction
+        agent_name = ""
+        if contract.assigned_agent:
+            agent_name = (
+                contract.assigned_agent.get_full_name()
+                or contract.assigned_agent.username
+            )
+        sheet.append([
+            _excel_safe_text(contract.client.name),
+            _excel_safe_text(contract.client.phone),
+            _excel_safe_text(contract.policy_number),
+            _excel_safe_text(contract.receipt),
+            _excel_safe_text(contract.brand),
+            _excel_safe_text(contract.registration),
+            contract.total_premium,
+            contract.end_date,
+            contract.get_renewal_status_display(),
+            (
+                last_interaction.get_call_result_display()
+                if last_interaction
+                else "Pas encore appelé"
+            ),
+            (
+                timezone.localtime(last_interaction.occurred_at).replace(tzinfo=None)
+                if last_interaction
+                else None
+            ),
+            _excel_safe_text(agent_name),
+        ])
+
+    for column in ("B", "C", "D", "F"):
+        for cell in sheet[column][1:]:
+            cell.number_format = "@"
+    for cell in sheet["G"][1:]:
+        cell.number_format = '#,##0.00'
+    for cell in sheet["H"][1:]:
+        cell.number_format = "dd/mm/yyyy"
+    for cell in sheet["K"][1:]:
+        cell.number_format = "dd/mm/yyyy hh:mm"
+    widths = (28, 18, 20, 18, 16, 20, 18, 18, 24, 24, 22, 20)
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[chr(64 + index)].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+    output = BytesIO()
+    workbook.save(output)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+    )
+    response["Content-Disposition"] = (
+        'attachment; filename="non-renouveles_'
+        f'{date_from:%Y-%m-%d}_{date_to:%Y-%m-%d}.xlsx"'
+    )
+    return response
 
 
 @login_required
@@ -130,6 +225,7 @@ def expired_list(request):
         scoped_contracts(request.user).filter(end_date__lt=timezone.localdate(), renewed_contract__isnull=True)
     ).exclude(renewal_status=Contract.RenewalStatus.RENEWED)
     date_filter_form = ExpiredDateFilterForm(request.GET or None)
+    export_requested = request.GET.get("action") == "export"
     if date_filter_form.is_valid():
         date_from = date_filter_form.cleaned_data.get("date_from")
         date_to = date_filter_form.cleaned_data.get("date_to")
@@ -137,6 +233,19 @@ def expired_list(request):
             qs = qs.filter(end_date__gte=date_from)
         if date_to:
             qs = qs.filter(end_date__lte=date_to)
+        if export_requested:
+            if not date_from or not date_to:
+                date_filter_form.add_error(
+                    None,
+                    "Veuillez sélectionner un intervalle de dates avant l’export.",
+                )
+            elif (date_to - date_from).days > 6:
+                date_filter_form.add_error(
+                    None,
+                    "L’intervalle d’export ne peut pas dépasser 7 jours.",
+                )
+            else:
+                return export_expired_contracts(qs, date_from, date_to)
     return render(request, "renewals/contract_list.html", {
         "contracts": paginate(request, qs),
         "title": "Clients non renouvelés",
