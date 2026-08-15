@@ -23,7 +23,8 @@
       <span>{{ date_filter_form.date_to.label }}</span>
       {{ date_filter_form.date_to }}
     </label>
-    <button class="btn dark">Afficher la période</button>
+    <button class="btn dark" name="action" value="filter">Afficher la période</button>
+    <button class="btn primary" name="action" value="export">Exporter en Excel</button>
     <a class="btn" href="{% url 'expired_list' %}">Réinitialiser</a>
     {% if date_filter_form.non_field_errors %}
       <div class="full">{{ date_filter_form.non_field_errors }}</div>

@@ -17,7 +17,7 @@ from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from .audit import record_audit_event
 from .models import AuditEvent, CallInteraction, Client, Contract, ImportBatch, Termination, User
@@ -2384,6 +2384,90 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(response, "OLD-02")
         self.assertNotContains(response, 'name="q"')
         self.assertNotContains(response, 'name="status"')
+
+    def test_non_renewed_export_requires_a_complete_seven_day_interval(self):
+        missing_dates = self.client.get(reverse("expired_list"), {
+            "action": "export",
+        })
+
+        self.assertEqual(missing_dates.status_code, 200)
+        self.assertContains(
+            missing_dates,
+            "Veuillez sélectionner un intervalle de dates avant l’export.",
+        )
+
+        interval_too_large = self.client.get(reverse("expired_list"), {
+            "action": "export",
+            "date_from": (timezone.localdate() - timedelta(days=10)).isoformat(),
+            "date_to": (timezone.localdate() - timedelta(days=3)).isoformat(),
+        })
+
+        self.assertEqual(interval_too_large.status_code, 200)
+        self.assertContains(
+            interval_too_large,
+            "L’intervalle d’export ne peut pas dépasser 7 jours.",
+        )
+
+    def test_non_renewed_export_downloads_excel_within_agent_scope(self):
+        date_from = timezone.localdate() - timedelta(days=8)
+        date_to = timezone.localdate() - timedelta(days=2)
+        exported_client = Client.objects.create(
+            name="Client export",
+            phone="0612345678",
+        )
+        exported_contract = Contract.objects.create(
+            client=exported_client,
+            assigned_agent=self.user,
+            policy_number="EXPORT-1",
+            receipt="QE-1",
+            brand="DACIA",
+            registration="12345-A-1",
+            total_premium=Decimal("750.50"),
+            end_date=timezone.localdate() - timedelta(days=5),
+        )
+        Contract.objects.create(
+            client=exported_client,
+            assigned_agent=self.user,
+            policy_number="OUTSIDE-1",
+            receipt="QO-1",
+            end_date=timezone.localdate() - timedelta(days=20),
+        )
+        other_agent = User.objects.create_user(
+            "export-other-agent",
+            password="secret",
+            role=User.Role.AGENT,
+        )
+        Contract.objects.create(
+            client=exported_client,
+            assigned_agent=other_agent,
+            policy_number="HIDDEN-1",
+            receipt="QH-1",
+            end_date=exported_contract.end_date,
+        )
+
+        response = self.client.get(reverse("expired_list"), {
+            "action": "export",
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn(
+            f"non-renouveles_{date_from:%Y-%m-%d}_{date_to:%Y-%m-%d}.xlsx",
+            response["Content-Disposition"],
+        )
+        workbook = load_workbook(BytesIO(response.content), data_only=True)
+        rows = list(workbook["Non renouvelés"].iter_rows(values_only=True))
+        self.assertEqual(rows[0][0:3], ("Assuré", "Téléphone", "Police"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][0], "Client export")
+        self.assertEqual(rows[1][1], "0612345678")
+        self.assertEqual(rows[1][2], "EXPORT-1")
+        self.assertEqual(rows[1][6], 750.5)
 
     def test_terminated_list_shows_contract_count_per_client_within_agent_scope(self):
         self.contract.renewal_status = Contract.RenewalStatus.TERMINATED

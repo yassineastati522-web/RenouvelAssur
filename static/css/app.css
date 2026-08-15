@@ -890,7 +890,7 @@ td small {
 }
 
 .date-range-filters {
-  grid-template-columns: minmax(190px, 260px) minmax(190px, 260px) auto auto;
+  grid-template-columns: minmax(190px, 260px) minmax(190px, 260px) auto auto auto;
   align-items: end;
 }
 
