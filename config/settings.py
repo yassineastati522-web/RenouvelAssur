@@ -39,6 +39,13 @@ for hostname in (
     if origin and origin not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(origin)
 
+CANONICAL_HOST = os.environ.get("DJANGO_CANONICAL_HOST", "").strip().lower()
+CANONICAL_REDIRECT_HOSTS = {
+    host.strip().lower()
+    for host in os.environ.get("DJANGO_CANONICAL_REDIRECT_HOSTS", "").split(",")
+    if host.strip()
+}
+
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
@@ -50,6 +57,7 @@ INSTALLED_APPS = [
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "renewals.session_security.CanonicalHostRedirectMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware", "django.middleware.csrf.CsrfViewMiddleware",

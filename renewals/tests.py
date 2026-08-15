@@ -2468,6 +2468,18 @@ class ApplicationFlowTests(TestCase):
         self.assertEqual(rows[1][1], "0612345678")
         self.assertEqual(rows[1][2], "EXPORT-1")
         self.assertEqual(rows[1][6], 750.5)
+        export_event = AuditEvent.objects.get(
+            actor=self.user,
+            action=AuditEvent.Action.DATA_EXPORTED,
+        )
+        self.assertEqual(export_event.target_type, "")
+        self.assertEqual(export_event.target_id, "")
+        self.assertEqual(export_event.details, {
+            "export_type": "non_renewed_contracts",
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "exported_count": 1,
+        })
 
     def test_terminated_list_shows_contract_count_per_client_within_agent_scope(self):
         self.contract.renewal_status = Contract.RenewalStatus.TERMINATED

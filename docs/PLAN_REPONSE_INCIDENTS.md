@@ -37,7 +37,11 @@ Les journaux utiles doivent être exportés vers un emplacement réservé aux pe
 4. Forcer le changement de mot de passe ou la réinitialisation MFA des comptes réellement exposés.
 5. Vérifier `/health/`, la connexion, l’import d’un fichier de test et les pages principales.
 
-Objectifs à valider avec l’agence : perte de données maximale acceptable (RPO) : **à renseigner**; délai maximal de reprise (RTO) : **à renseigner**.
+Objectifs techniques proposés après activation et test du job quotidien : perte
+de données maximale acceptable (RPO) : **24 heures** pour la sauvegarde
+indépendante ; délai maximal de reprise (RTO) : **4 heures ouvrées**. Ces valeurs
+doivent être validées par l’agence et révisées si l’activité exige une reprise
+plus rapide.
 
 ## 4. Décider des notifications
 

@@ -217,6 +217,7 @@ class AuditEvent(models.Model):
         SECURITY_ALERT = "security_alert", "Alerte de sécurité"
         SESSIONS_REVOKED = "sessions_revoked", "Sessions révoquées"
         AUDIT_EXPORTED = "audit_exported", "Journal d’audit exporté"
+        DATA_EXPORTED = "data_exported", "Données métier exportées"
         USER_CREATED = "user_created", "Utilisateur créé"
         USER_UPDATED = "user_updated", "Utilisateur modifié"
         USER_DELETED = "user_deleted", "Utilisateur supprimé"
