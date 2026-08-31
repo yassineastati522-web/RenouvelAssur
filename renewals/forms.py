@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm
@@ -9,6 +11,16 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from .models import CallInteraction, Client, QUICK_CALL_RESULTS
 from .services import validate_import_file
+
+
+class DayMonthYearDateInput(forms.DateInput):
+    def format_value(self, value):
+        if isinstance(value, str):
+            try:
+                value = datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        return super().format_value(value)
 
 
 class AgencyAuthenticationForm(AuthenticationForm):
@@ -175,7 +187,16 @@ class ChecklistDateFilterForm(forms.Form):
     due_date = forms.DateField(
         label="Échéances à partir du",
         required=False,
-        widget=forms.DateInput(attrs={"type": "date"}),
+        input_formats=["%d/%m/%Y", "%Y-%m-%d"],
+        widget=DayMonthYearDateInput(
+            format="%d/%m/%Y",
+            attrs={
+                "type": "text",
+                "placeholder": "jj/mm/aaaa",
+                "inputmode": "numeric",
+                "autocomplete": "off",
+            },
+        ),
     )
 
 
