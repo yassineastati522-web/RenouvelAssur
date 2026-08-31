@@ -2293,11 +2293,12 @@ class ApplicationFlowTests(TestCase):
         self.assertContains(from_date, "Échéances à partir du")
         self.assertNotContains(from_date, 'name="q"')
         self.assertContains(from_date, 'name="due_date"')
-        self.assertContains(from_date, 'type="text"')
-        self.assertContains(from_date, 'placeholder="jj/mm/aaaa"')
+        self.assertContains(from_date, 'type="date"')
+        self.assertContains(from_date, 'lang="fr-MA"')
+        self.assertContains(from_date, 'title="Format : jj/mm/aaaa"')
         self.assertContains(
             from_date,
-            f'value="{(timezone.localdate() + timedelta(days=10)):%d/%m/%Y}"',
+            f'value="{(timezone.localdate() + timedelta(days=10)):%Y-%m-%d}"',
         )
         self.assertNotContains(from_date, 'name="date_from"')
         self.assertNotContains(from_date, 'name="date_to"')
