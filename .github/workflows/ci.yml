@@ -47,6 +47,11 @@ jobs:
           python manage.py check
           python manage.py makemigrations --check --dry-run
 
+      - name: Vérifier le programme de sauvegarde
+        run: |
+          sh -n ops/backup/backup.sh
+          docker build --file ops/backup/Dockerfile --tag renouvelassur-backup:test .
+
       - name: Tester la configuration de production
         env:
           DJANGO_DEBUG: "0"

@@ -25,6 +25,43 @@ def current_token(device):
     return str(generator.token()).zfill(device.digits)
 
 
+@override_settings(
+    ALLOWED_HOSTS=[
+        "app.renouvelassur.org",
+        "renouvelassur.org",
+        "renouvelassur.onrender.com",
+        "www.renouvelassur.org",
+    ],
+    CANONICAL_HOST="app.renouvelassur.org",
+    CANONICAL_REDIRECT_HOSTS={"renouvelassur.org", "www.renouvelassur.org"},
+)
+class CanonicalHostRedirectTests(TestCase):
+    def test_root_domain_redirects_to_app_and_preserves_path_and_query(self):
+        response = self.client.get(
+            "/connexion/?next=%2Fclients%2F",
+            HTTP_HOST="renouvelassur.org",
+        )
+
+        self.assertEqual(response.status_code, 308)
+        self.assertEqual(
+            response["Location"],
+            "https://app.renouvelassur.org/connexion/?next=%2Fclients%2F",
+        )
+
+    def test_application_and_render_health_hosts_are_not_redirected(self):
+        application = self.client.get(
+            reverse("health_check"),
+            HTTP_HOST="app.renouvelassur.org",
+        )
+        render_health = self.client.get(
+            reverse("health_check"),
+            HTTP_HOST="renouvelassur.onrender.com",
+        )
+
+        self.assertEqual(application.status_code, 200)
+        self.assertEqual(render_health.status_code, 200)
+
+
 @override_settings(ADMIN_MFA_REQUIRED=True)
 class AdminMFAFlowTests(TestCase):
     def setUp(self):

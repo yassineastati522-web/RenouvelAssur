@@ -102,6 +102,13 @@ En production, `DJANGO_ADMIN_MFA_REQUIRED=1` impose la double authentification a
 
 La surveillance d’erreurs est facultative. Pour l’activer, créer un projet Django dans Sentry puis ajouter `SENTRY_DSN` directement dans les variables secrètes de Render. Ne jamais écrire le DSN dans GitHub. `SENTRY_TRACES_SAMPLE_RATE=0` désactive par défaut le traçage de performance afin de minimiser les données envoyées.
 
+Le Blueprint prépare également le Cron Job `renouvelassur-backup`. Ce job crée
+chaque jour une sauvegarde PostgreSQL vérifiée, la chiffre avant transfert et
+l’envoie vers un stockage S3 privé. Avant son premier lancement, renseigner dans
+Render l’URL Neon directe, la phrase de chiffrement et les identifiants du
+stockage indiqués dans `docs/SAUVEGARDE_RESTAURATION.md`. Le code source, Render
+et l’historique Git ne remplacent pas cette sauvegarde indépendante.
+
 Les procédures d’exploitation sont documentées dans :
 
 - [`docs/SAUVEGARDE_RESTAURATION.md`](docs/SAUVEGARDE_RESTAURATION.md) pour créer, contrôler et restaurer une sauvegarde PostgreSQL/Neon ;
@@ -120,6 +127,7 @@ Le fichier `render.yaml` et le script `build.sh` préparent automatiquement le s
 3. Laisser Render générer `DJANGO_SECRET_KEY` et déployer la branche `main`.
 4. Vérifier `https://<service>.onrender.com/health/`, puis se connecter avec le compte administrateur déjà présent dans Neon.
 5. Le domaine `app.renouvelassur.org` et l’hôte exact `renouvelassur.onrender.com` sont déclarés dans `render.yaml`; adaptez ces deux listes si le nom du service change.
+6. Ajouter aussi `renouvelassur.org` et `www.renouvelassur.org` comme domaines personnalisés du service, puis diriger leur DNS vers Render. L’application les redirige alors vers `https://app.renouvelassur.org` en conservant le chemin demandé.
 
 Le plan gratuit est adapté à la validation uniquement, car il peut se mettre en veille. Utiliser une instance payante avant l’ouverture professionnelle.
 

@@ -6,6 +6,9 @@ from .models import AuditEvent
 SAFE_DETAIL_KEYS = {
     "added_rows",
     "changed_fields",
+    "date_from",
+    "date_to",
+    "export_type",
     "import_type",
     "exported_count",
     "new_status",

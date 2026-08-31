@@ -27,7 +27,7 @@
     <option value="unavailable" {% if call_status == 'unavailable' %}selected{% endif %}>Indisponibles</option>
   </select>
   <select name="due_filter" aria-label="Filtrer par date d’échéance">
-    <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Actions à venir</option>
+    <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Actions à traiter</option>
     <option value="expired" {% if due_filter == 'expired' %}selected{% endif %}>Déjà échues</option>
     <option value="gt7" {% if due_filter == 'gt7' %}selected{% endif %}>Action &gt; 7 jours</option>
     <option value="gt15" {% if due_filter == 'gt15' %}selected{% endif %}>Action &gt; 15 jours</option>
@@ -42,7 +42,7 @@
 <section class="panel table-panel call-panel">
   <div class="panel-title">
     <div><span class="eyebrow">LISTE DE TRAVAIL</span><h2>Clients à contacter</h2></div>
-    <span class="checklist-help">☑ = appel enregistré · Prochaines actions ↑ croissantes</span>
+    <span class="checklist-help">☑ = appel enregistré · Actions à traiter ↑ croissantes</span>
   </div>
   <div class="table-wrap">
     <table class="call-table">

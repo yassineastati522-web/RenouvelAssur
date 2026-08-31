@@ -33,8 +33,43 @@ services:
       - key: SENTRY_TRACES_SAMPLE_RATE
         value: "0"
       - key: DJANGO_ALLOWED_HOSTS
-        value: app.renouvelassur.org,renouvelassur.onrender.com
+        value: app.renouvelassur.org,renouvelassur.org,www.renouvelassur.org,renouvelassur.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
-        value: https://app.renouvelassur.org,https://renouvelassur.onrender.com
+        value: https://app.renouvelassur.org,https://renouvelassur.org,https://www.renouvelassur.org,https://renouvelassur.onrender.com
+      - key: DJANGO_CANONICAL_HOST
+        value: app.renouvelassur.org
+      - key: DJANGO_CANONICAL_REDIRECT_HOSTS
+        value: renouvelassur.org,www.renouvelassur.org
       - key: DATABASE_URL
         sync: false
+
+  - type: cron
+    name: renouvelassur-backup
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    branch: main
+    schedule: "0 2 * * *"
+    dockerfilePath: ./ops/backup/Dockerfile
+    dockerContext: .
+    autoDeployTrigger: commit
+    envVars:
+      # Utiliser l’URL Neon directe (non poolée) avec sslmode=require.
+      - key: BACKUP_DATABASE_URL
+        sync: false
+      - key: BACKUP_ENCRYPTION_PASSPHRASE
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: S3_ENDPOINT_URL
+        value: ""
+      - key: S3_SERVER_SIDE_ENCRYPTION
+        value: AES256
+      - key: BACKUP_PREFIX
+        value: renouvelassur

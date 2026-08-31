@@ -245,7 +245,19 @@ def expired_list(request):
                     "L’intervalle d’export ne peut pas dépasser 7 jours.",
                 )
             else:
-                return export_expired_contracts(qs, date_from, date_to)
+                exported_count = qs.count()
+                response = export_expired_contracts(qs, date_from, date_to)
+                record_audit_event(
+                    actor=request.user,
+                    action=AuditEvent.Action.DATA_EXPORTED,
+                    details={
+                        "export_type": "non_renewed_contracts",
+                        "date_from": date_from.isoformat(),
+                        "date_to": date_to.isoformat(),
+                        "exported_count": exported_count,
+                    },
+                )
+                return response
     return render(request, "renewals/contract_list.html", {
         "contracts": paginate(request, qs),
         "title": "Clients non renouvelés",
@@ -482,7 +494,13 @@ def call_checklist(request):
         contracts = contracts.filter(action_date__gt=today + timedelta(days=15))
     else:
         due_filter = "all"
-        contracts = contracts.filter(action_date__gte=today)
+        contracts = contracts.filter(
+            Q(action_date__gte=today)
+            | Q(
+                is_provisional=True,
+                provisional_due_date__lt=today,
+            )
+        )
 
     total_count = contracts.count()
     pending_count = contracts.filter(last_call_at__isnull=True).count()

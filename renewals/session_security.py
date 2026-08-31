@@ -8,7 +8,7 @@ from axes.signals import user_locked_out
 from django_otp.forms import otp_verification_failed
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from django.dispatch import receiver
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseForbidden, HttpResponsePermanentRedirect
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -20,6 +20,29 @@ from .security_alerts import report_security_alert
 
 
 SESSION_DAY_KEY = "_renewal_login_day"
+
+
+class CanonicalHostRedirectMiddleware:
+    """Redirige uniquement les domaines publics explicitement déclarés."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        host = request.get_host().split(":", 1)[0].lower()
+        if (
+            settings.CANONICAL_HOST
+            and host in settings.CANONICAL_REDIRECT_HOSTS
+            and host != settings.CANONICAL_HOST
+        ):
+            destination = (
+                f"https://{settings.CANONICAL_HOST}{request.get_full_path()}"
+            )
+            return HttpResponsePermanentRedirect(
+                destination,
+                preserve_request=True,
+            )
+        return self.get_response(request)
 
 
 def discard_client_ip(request):
