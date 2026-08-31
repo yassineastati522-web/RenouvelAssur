@@ -2293,8 +2293,24 @@ class ApplicationFlowTests(TestCase):
         self.assertContains(from_date, "Échéances à partir du")
         self.assertNotContains(from_date, 'name="q"')
         self.assertContains(from_date, 'name="due_date"')
+        self.assertContains(from_date, 'type="text"')
+        self.assertContains(from_date, 'placeholder="jj/mm/aaaa"')
+        self.assertContains(
+            from_date,
+            f'value="{(timezone.localdate() + timedelta(days=10)):%d/%m/%Y}"',
+        )
         self.assertNotContains(from_date, 'name="date_from"')
         self.assertNotContains(from_date, 'name="date_to"')
+
+        french_format = self.client.get(reverse("call_checklist"), {
+            "due_date": (
+                timezone.localdate() + timedelta(days=10)
+            ).strftime("%d/%m/%Y"),
+        })
+        self.assertNotContains(french_format, "POL-05")
+        self.assertContains(french_format, "POL-10")
+        self.assertContains(french_format, "POL-20")
+        self.assertNotContains(french_format, "POL-PAST")
 
         from_expired_date = self.client.get(reverse("call_checklist"), {
             "due_date": (
