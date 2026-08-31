@@ -1084,6 +1084,56 @@ class ImportServiceTests(TestCase):
             "Attestation définitive à remettre",
         )
 
+    def test_provisional_tracking_updates_higher_premium_contract(self):
+        client = Client.objects.create(name="Client prime conservée")
+        contract = Contract.objects.create(
+            client=client,
+            policy_number="PROV-HIGH-PREMIUM",
+            receipt="Q-HIGH",
+            registration="999-A-9",
+            event="Affaire nouvelle",
+            net_premium=Decimal("850.00"),
+            total_premium=Decimal("900.00"),
+            effective_date=date(2026, 8, 5),
+            end_date=date(2027, 8, 4),
+        )
+        upload = provisional_csv_upload([
+            [
+                "Police", "N° Attestation", "Date d'écheance",
+                "Provisoires délivrées", "Nature Evennement", "Assuré",
+                "Prime nette", "Prime TTC", "N° Quittance",
+                "Immatriculation", "Date Effet", "Date fin/ Echéance",
+                "Date Emission", "Etat Contrat",
+            ],
+            [
+                "PROV-HIGH-PREMIUM", "ATT-SEPT-1", "04/09/2026", 1,
+                "Prorogation", "Client prime conservée", 650, 700,
+                "Q-PROVISIONAL", "999 A 9", "05/08/2026",
+                "05/08/2027", "03/08/2026", "En cours",
+            ],
+        ])
+
+        batch = import_contracts(
+            upload,
+            self.admin,
+            expected_type=ImportBatch.ImportType.PROVISIONAL,
+        )
+
+        self.assertEqual(
+            (batch.added_rows, batch.updated_rows, batch.rejected_rows),
+            (0, 1, 0),
+        )
+        self.assertEqual(Contract.objects.count(), 1)
+        contract.refresh_from_db()
+        self.assertEqual(contract.receipt, "Q-HIGH")
+        self.assertEqual(contract.net_premium, Decimal("850.00"))
+        self.assertEqual(contract.total_premium, Decimal("900.00"))
+        self.assertTrue(contract.is_provisional)
+        self.assertEqual(contract.provisional_attestation, "ATT-SEPT-1")
+        self.assertEqual(contract.provisional_due_date, date(2026, 9, 4))
+        self.assertEqual(contract.provisional_delivered_count, 1)
+        self.assertEqual(contract.provisional_status, "En cours")
+
     def test_provisional_import_rejects_count_above_contract_quota(self):
         upload = provisional_csv_upload([
             [
@@ -2321,6 +2371,52 @@ class ApplicationFlowTests(TestCase):
             updated_checklist,
             "Attestation définitive à remettre",
         )
+
+    def test_overdue_active_provisional_import_stays_in_default_checklist(self):
+        today = timezone.localdate()
+        upload = provisional_csv_upload([
+            [
+                "Police", "N° Attestation", "Date d'écheance",
+                "Provisoires délivrées", "Nature Evennement", "Assuré",
+                "Prime nette", "Prime TTC", "N° Quittance",
+                "Immatriculation", "Date Effet", "Date fin/ Echéance",
+                "Date Emission", "Etat Contrat",
+            ],
+            [
+                "POL-PROV-OVERDUE", "ATT-OVERDUE",
+                (today - timedelta(days=1)).strftime("%d/%m/%Y"),
+                1, "Affaire nouvelle", "Client provisoire en retard",
+                700, 800, "Q-PROV-OVERDUE", "999-A-9",
+                (today - timedelta(days=31)).strftime("%d/%m/%Y"),
+                (today + timedelta(days=151)).strftime("%d/%m/%Y"),
+                (today - timedelta(days=31)).strftime("%d/%m/%Y"),
+                "En cours",
+            ],
+        ])
+
+        batch = import_contracts(
+            upload,
+            self.user,
+            expected_type=ImportBatch.ImportType.PROVISIONAL,
+        )
+
+        self.assertEqual((batch.added_rows, batch.rejected_rows), (1, 0))
+        provisional = Contract.objects.get(policy_number="POL-PROV-OVERDUE")
+        self.assertTrue(provisional.is_provisional)
+        self.assertEqual(
+            provisional.provisional_due_date,
+            today - timedelta(days=1),
+        )
+
+        default_response = self.client.get(reverse("call_checklist"))
+        self.assertContains(default_response, "POL-PROV-OVERDUE")
+        self.assertContains(default_response, "Actions à traiter")
+
+        expired_response = self.client.get(
+            reverse("call_checklist"),
+            {"due_filter": "expired"},
+        )
+        self.assertContains(expired_response, "POL-PROV-OVERDUE")
 
     def test_pagination_uses_arrow_buttons_and_keeps_checklist_filters(self):
         clients = [

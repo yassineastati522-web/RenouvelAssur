@@ -952,6 +952,19 @@ def select_contract_candidate(item, contracts, claimed_ids):
 
 def merge_contract_values(contract, item, client):
     incoming = item["values"]
+    preserve_higher_premium_source = (
+        item["import_type"] == ImportBatch.ImportType.PROVISIONAL
+        and premium_rank(incoming["total_premium"])
+        <= premium_rank(contract.total_premium)
+    )
+    protected_source_fields = {
+        "event",
+        "net_premium",
+        "cash_premium",
+        "total_premium",
+        "net_payable",
+        "issue_date",
+    }
     preserve_snapshot_end = (
         item["import_type"] == ImportBatch.ImportType.BORDEREAU
         and contract.from_upcoming_file
@@ -960,6 +973,8 @@ def merge_contract_values(contract, item, client):
     contract.client = client
     for field, value in incoming.items():
         if value in (None, ""):
+            continue
+        if preserve_higher_premium_source and field in protected_source_fields:
             continue
         if field == "end_date" and preserve_snapshot_end:
             continue
@@ -973,7 +988,9 @@ def merge_contract_values(contract, item, client):
         contract.provisional_selected_count = incoming[
             "provisional_delivered_count"
         ]
-    if item["receipt"]:
+    if item["receipt"] and (
+        not preserve_higher_premium_source or not contract.receipt
+    ):
         contract.receipt = item["receipt"]
     if item["import_type"] == ImportBatch.ImportType.UPCOMING:
         contract.policy_number = item["policy"]
@@ -1426,10 +1443,14 @@ def import_contract_rows(rows, filename, user):
                     filtered_parsed.append(item)
                     continue
                 if business_contract is not None:
-                    if item["import_type"] == ImportBatch.ImportType.UPCOMING:
-                        # Le fichier d'échéances ne contient pas de prime : il
-                        # complète toujours le contrat de production existant
-                        # au lieu d'être rejeté comme un doublon moins cher.
+                    if item["import_type"] in {
+                        ImportBatch.ImportType.UPCOMING,
+                        ImportBatch.ImportType.PROVISIONAL,
+                    }:
+                        # Les échéances et le suivi provisoire complètent le
+                        # contrat existant. La fusion conserve séparément la
+                        # meilleure source financière lorsque sa prime est
+                        # supérieure à celle du fichier de suivi.
                         item["matched_contract_id"] = business_contract.pk
                         filtered_parsed.append(item)
                         continue
