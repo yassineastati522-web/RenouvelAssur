@@ -2389,7 +2389,7 @@ class ApplicationFlowTests(TestCase):
             "Attestation définitive à remettre",
         )
 
-    def test_overdue_active_provisional_import_stays_in_default_checklist(self):
+    def test_overdue_active_provisional_is_only_in_expired_checklist(self):
         today = timezone.localdate()
         upload = provisional_csv_upload([
             [
@@ -2426,7 +2426,7 @@ class ApplicationFlowTests(TestCase):
         )
 
         default_response = self.client.get(reverse("call_checklist"))
-        self.assertContains(default_response, "POL-PROV-OVERDUE")
+        self.assertNotContains(default_response, "POL-PROV-OVERDUE")
         self.assertContains(default_response, "Actions à traiter")
 
         expired_response = self.client.get(
