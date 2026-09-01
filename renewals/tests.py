@@ -2264,14 +2264,10 @@ class ApplicationFlowTests(TestCase):
         all_response = self.client.get(reverse("call_checklist"), {"due_filter": "all"})
         content = all_response.content.decode()
         self.assertNotContains(all_response, "POL-PAST")
+        self.assertNotContains(all_response, 'value="expired"')
+        self.assertNotContains(all_response, "Déjà échues")
         self.assertLess(content.index("POL-05"), content.index("POL-10"))
         self.assertLess(content.index("POL-10"), content.index("POL-20"))
-
-        expired = self.client.get(reverse("call_checklist"), {"due_filter": "expired"})
-        self.assertContains(expired, "POL-PAST")
-        self.assertNotContains(expired, "POL-05")
-        self.assertNotContains(expired, "POL-10")
-        self.assertNotContains(expired, "POL-20")
 
         after_7 = self.client.get(reverse("call_checklist"), {"due_filter": "gt7"})
         self.assertNotContains(after_7, "POL-05")
@@ -2389,7 +2385,7 @@ class ApplicationFlowTests(TestCase):
             "Attestation définitive à remettre",
         )
 
-    def test_overdue_active_provisional_is_only_in_expired_checklist(self):
+    def test_overdue_active_provisional_is_excluded_from_checklist(self):
         today = timezone.localdate()
         upload = provisional_csv_upload([
             [
@@ -2429,11 +2425,18 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(default_response, "POL-PROV-OVERDUE")
         self.assertContains(default_response, "Actions à traiter")
 
-        expired_response = self.client.get(
+        legacy_expired_response = self.client.get(
             reverse("call_checklist"),
             {"due_filter": "expired"},
         )
-        self.assertContains(expired_response, "POL-PROV-OVERDUE")
+        self.assertNotContains(
+            legacy_expired_response,
+            "POL-PROV-OVERDUE",
+        )
+        self.assertEqual(
+            legacy_expired_response.context["due_filter"],
+            "all",
+        )
 
     def test_pagination_uses_arrow_buttons_and_keeps_checklist_filters(self):
         clients = [

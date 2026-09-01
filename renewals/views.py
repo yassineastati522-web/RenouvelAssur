@@ -486,8 +486,6 @@ def call_checklist(request):
     due_filter = request.GET.get("due_filter", "all")
     if selected_due_date:
         contracts = contracts.filter(action_date__gte=selected_due_date)
-    elif due_filter == "expired":
-        contracts = contracts.filter(action_date__lt=today)
     elif due_filter == "gt7":
         contracts = contracts.filter(action_date__gt=today + timedelta(days=7))
     elif due_filter == "gt15":
