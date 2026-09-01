@@ -28,7 +28,6 @@
   </select>
   <select name="due_filter" aria-label="Filtrer par date d’échéance">
     <option value="all" {% if due_filter == 'all' %}selected{% endif %}>Actions à traiter</option>
-    <option value="expired" {% if due_filter == 'expired' %}selected{% endif %}>Déjà échues</option>
     <option value="gt7" {% if due_filter == 'gt7' %}selected{% endif %}>Action &gt; 7 jours</option>
     <option value="gt15" {% if due_filter == 'gt15' %}selected{% endif %}>Action &gt; 15 jours</option>
   </select>
