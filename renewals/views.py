@@ -494,13 +494,7 @@ def call_checklist(request):
         contracts = contracts.filter(action_date__gt=today + timedelta(days=15))
     else:
         due_filter = "all"
-        contracts = contracts.filter(
-            Q(action_date__gte=today)
-            | Q(
-                is_provisional=True,
-                provisional_due_date__lt=today,
-            )
-        )
+        contracts = contracts.filter(action_date__gte=today)
 
     total_count = contracts.count()
     pending_count = contracts.filter(last_call_at__isnull=True).count()
