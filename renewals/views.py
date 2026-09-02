@@ -6,10 +6,11 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import transaction
-from django.db.models import Case, Count, DateField, F, OuterRef, Prefetch, Q, Subquery, Sum, When
+from django.db.models import Case, Count, DateField, DateTimeField, F, OuterRef, Prefetch, Q, Subquery, Sum, Value, When
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from django.views.decorators.http import require_http_methods
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -288,11 +289,20 @@ def terminated_list(request):
 @login_required
 @transaction.atomic
 def contract_detail(request, pk):
-    contract = get_object_or_404(scoped_contracts(request.user), pk=pk)
+    contracts = scoped_contracts(request.user)
+    if request.method == "POST":
+        contracts = contracts.select_for_update(of=("self",))
+    contract = get_object_or_404(contracts, pk=pk)
     is_plan_post = (
         request.method == "POST"
         and request.POST.get("form_action") == "provisional_plan"
     )
+    if request.method == "POST" and not is_plan_post and not constant_time_compare(
+        request.POST.get("call_context", ""), contract.call_context_token,
+    ):
+        messages.error(request, "Formulaire périmé ou incomplet : actualisez la fiche "
+                       "avant de valider l’appel. Aucun appel enregistré.")
+        return redirect("contract_detail", pk=contract.pk)
     form = InteractionForm(
         request.POST if request.method == "POST" and not is_plan_post else None,
         initial={"renewal_status": contract.renewal_status},
@@ -423,7 +433,16 @@ def call_checklist(request):
         scoped_contracts(request.user)
     )
     if request.method == "POST":
-        contract = get_object_or_404(allowed_contracts, pk=request.POST.get("contract"))
+        contract = get_object_or_404(
+            allowed_contracts.select_for_update(of=("self",)),
+            pk=request.POST.get("contract"),
+        )
+        if not constant_time_compare(
+            request.POST.get("call_context", ""), contract.call_context_token,
+        ):
+            messages.error(request, "Formulaire périmé ou incomplet : actualisez la checklist "
+                           "avant de valider l’appel. Aucun appel enregistré.")
+            return redirect(request.get_full_path())
         result = request.POST.get("call_result", "")
         allowed_results = {value for value, _label in QUICK_CALL_RESULTS}
         if result not in allowed_results:
@@ -446,13 +465,25 @@ def call_checklist(request):
             messages.success(request, f"Appel de {contract.client.name} enregistré dans la checklist.")
         return redirect(request.get_full_path())
 
+    now = timezone.now()
     latest_call = CallInteraction.objects.filter(
         contract=OuterRef("pk"),
         channel=CallInteraction.Channel.PHONE,
+    ).annotate(
+        cycle_start=Case(
+            When(
+                contract__renewal_calls_started_at__lte=now,
+                then=F("contract__renewal_calls_started_at"),
+            ),
+            When(
+                contract__is_provisional=True,
+                then=F("contract__provisional_calls_started_at"),
+            ),
+            default=Value(None),
+            output_field=DateTimeField(),
+        ),
     ).filter(
-        Q(contract__is_provisional=False)
-        | Q(contract__provisional_calls_started_at__isnull=True)
-        | Q(occurred_at__gte=OuterRef("provisional_calls_started_at"))
+        Q(cycle_start__isnull=True) | Q(occurred_at__gte=F("cycle_start"))
     ).order_by("-occurred_at", "-pk")
     closed_statuses = [
         Contract.RenewalStatus.RENEWED,
@@ -464,6 +495,7 @@ def call_checklist(request):
         allowed_contracts.exclude(renewal_status__in=closed_statuses)
     ).annotate(
         action_date=Case(
+            When(renewal_calls_started_at__lte=now, then=F("end_date")),
             When(
                 is_provisional=True,
                 provisional_due_date__isnull=False,
