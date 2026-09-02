@@ -449,6 +449,10 @@ def call_checklist(request):
     latest_call = CallInteraction.objects.filter(
         contract=OuterRef("pk"),
         channel=CallInteraction.Channel.PHONE,
+    ).filter(
+        Q(contract__is_provisional=False)
+        | Q(contract__provisional_calls_started_at__isnull=True)
+        | Q(occurred_at__gte=OuterRef("provisional_calls_started_at"))
     ).order_by("-occurred_at", "-pk")
     closed_statuses = [
         Contract.RenewalStatus.RENEWED,

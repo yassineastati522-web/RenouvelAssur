@@ -95,6 +95,12 @@ class Contract(models.Model):
         max_length=100,
         blank=True,
     )
+    provisional_calls_started_at = models.DateTimeField(
+        "début des appels de la provisoire courante",
+        null=True,
+        blank=True,
+        editable=False,
+    )
     from_upcoming_file = models.BooleanField(
         "présent dans un fichier d’échéances",
         default=False,

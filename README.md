@@ -69,6 +69,8 @@ La combinaison `Police + Quittance` identifie un contrat. Pour le fichier d’é
 
 Pour le suivi provisoire, un contrat d’environ 3 mois autorise au maximum 1 provisoire, un contrat d’environ 6 mois en autorise 2 et un contrat annuel en autorise 3. Le client peut en choisir moins depuis sa fiche contrat, sans pouvoir descendre sous le nombre déjà délivré. Tant que le nombre choisi n’est pas atteint, la checklist affiche « Prochaine provisoire à remettre ». À la dernière provisoire retenue, elle affiche « Attestation définitive à remettre ». La date fournie dans le suivi reste la référence de la prochaine action.
 
+Lorsqu’un import active le suivi provisoire ou change son attestation, son échéance ou son nombre délivré, la checklist revient à « À appeler » pour cette nouvelle étape. Seuls les appels enregistrés depuis cet import déterminent son statut, sa case « Fait » et les filtres À appeler / Traités / Indisponibles. L’historique et le compteur total des tentatives restent conservés. Un réimport identique, une modification de prime ou du nombre choisi par le client ne réinitialisent pas les appels. Cette règle s’applique aux nouvelles étapes importées après le déploiement : la migration ne réinitialise pas les anciens dossiers faute d’un historique fiable de leurs changements de provisoire.
+
 Après chaque import, les contrats portant la même immatriculation sont comparés. Lorsqu’un contrat plus récent commence à la fin de l’ancien et possède une échéance ultérieure, l’ancien est relié au nouveau et n’apparaît plus parmi les contrats non renouvelés.
 
 Un second fichier Excel ne contenant que `Téléphone` et un identifiant (`Police`, `CIN` ou `Client`) peut mettre à jour les contacts existants.

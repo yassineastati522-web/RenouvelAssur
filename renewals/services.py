@@ -952,6 +952,24 @@ def select_contract_candidate(item, contracts, claimed_ids):
 
 def merge_contract_values(contract, item, client):
     incoming = item["values"]
+    if (
+        item["import_type"] == ImportBatch.ImportType.PROVISIONAL
+        and incoming["is_provisional"]
+        and (
+            not contract.is_provisional
+            or any(
+                incoming[field] not in (None, "")
+                and incoming[field] != getattr(contract, field)
+                for field in (
+                    "provisional_attestation",
+                    "provisional_due_date",
+                    "provisional_delivered_count",
+                )
+            )
+        )
+    ):
+        # Une nouvelle étape doit être rappelée, sans effacer les anciens appels.
+        contract.provisional_calls_started_at = timezone.now()
     preserve_higher_premium_source = (
         item["import_type"] == ImportBatch.ImportType.PROVISIONAL
         and premium_rank(incoming["total_premium"])
@@ -1681,6 +1699,7 @@ def import_contract_rows(rows, filename, user):
                         "policy_number",
                         "receipt",
                         *CONTRACT_VALUE_FIELDS,
+                        "provisional_calls_started_at",
                         "from_upcoming_file",
                         "renewal_status",
                         "renewed_contract",
