@@ -950,6 +950,35 @@ def select_contract_candidate(item, contracts, claimed_ids):
     )
 
 
+def provisional_import_conflict(contract, incoming):
+    """Refuse un recul ou un remplacement d'attestation sans ordre fiable."""
+    if incoming["provisional_delivered_count"] < contract.provisional_delivered_count:
+        return "suivi provisoire ignoré : nombre délivré inférieur au suivi enregistré"
+    if (
+        contract.provisional_due_date
+        and incoming["provisional_due_date"] < contract.provisional_due_date
+    ):
+        return "suivi provisoire ignoré : échéance antérieure au suivi enregistré"
+    if incoming["is_provisional"]:
+        if (
+            contract.provisional_delivered_count
+            and not provisional_is_active(contract.provisional_status)
+        ):
+            return "suivi provisoire ignoré : ce suivi est déjà clôturé"
+        if (
+            contract.provisional_attestation
+            and incoming["provisional_attestation"]
+            and incoming["provisional_attestation"] != contract.provisional_attestation
+            and incoming["provisional_delivered_count"] == contract.provisional_delivered_count
+            and incoming["provisional_due_date"] == contract.provisional_due_date
+        ):
+            return (
+                "suivi provisoire ambigu : attestation différente sans progression "
+                "du nombre délivré ni de l’échéance ; vérifiez le fichier"
+            )
+    return None
+
+
 def merge_contract_values(contract, item, client):
     incoming = item["values"]
     if (
@@ -970,6 +999,7 @@ def merge_contract_values(contract, item, client):
     ):
         # Une nouvelle étape doit être rappelée, sans effacer les anciens appels.
         contract.provisional_calls_started_at = timezone.now()
+        contract.renewal_calls_started_at = None
     preserve_higher_premium_source = (
         item["import_type"] == ImportBatch.ImportType.PROVISIONAL
         and premium_rank(incoming["total_premium"])
@@ -1013,6 +1043,24 @@ def merge_contract_values(contract, item, client):
     if item["import_type"] == ImportBatch.ImportType.UPCOMING:
         contract.policy_number = item["policy"]
         contract.from_upcoming_file = True
+    if (
+        item["import_type"] in {ImportBatch.ImportType.UPCOMING, ImportBatch.ImportType.PROVISIONAL}
+        and contract.from_upcoming_file
+        and contract.is_provisional
+        and contract.provisional_due_date
+        and contract.provisional_due_date < contract.end_date
+        and contract.renewal_calls_started_at is None
+    ):
+        # L'échéance finale importée reste à rappeler, sans supposer la
+        # définitive remise. Un import anticipé attend la fin de la provisoire.
+        after_provisional = timezone.make_aware(
+            datetime.combine(
+                contract.provisional_due_date + timedelta(days=1),
+                datetime.min.time(),
+            ),
+            timezone.get_default_timezone(),
+        )
+        contract.renewal_calls_started_at = max(timezone.now(), after_provisional)
 
 
 def merge_termination_values(contract, item, client):
@@ -1367,9 +1415,11 @@ def import_contract_rows(rows, filename, user):
                 if policy
             }
             existing_contract_list = list(
-                Contract.objects.select_related("client", "termination").filter(
+                Contract.objects.select_related("client", "termination").select_for_update(
+                    of=("self",),
+                ).filter(
                     policy_number__in=policies
-                )
+                ).order_by("pk")
             )
             existing_contracts = {
                 (contract.policy_number, contract.receipt): contract
@@ -1460,6 +1510,17 @@ def import_contract_rows(rows, filename, user):
                     item["preserve_closed_cycle"] = True
                     filtered_parsed.append(item)
                     continue
+                if item["import_type"] == ImportBatch.ImportType.PROVISIONAL:
+                    candidate = (
+                        business_contract
+                        or exact_contract
+                        or select_contract_candidate(item, policy_candidates, set())
+                    )
+                    if candidate is not None:
+                        conflict = provisional_import_conflict(candidate, item["values"])
+                        if conflict:
+                            record_error(batch, item["line"], ValueError(conflict))
+                            continue
                 if business_contract is not None:
                     if item["import_type"] in {
                         ImportBatch.ImportType.UPCOMING,
@@ -1526,6 +1587,8 @@ def import_contract_rows(rows, filename, user):
                     continue
                 filtered_parsed.append(item)
             parsed = filtered_parsed
+            if not parsed:
+                return save_batch(batch)
 
             external_ids = {item["external_id"] for item in parsed if item["external_id"]}
             names = {item["name"].lower() for item in parsed}
@@ -1634,6 +1697,16 @@ def import_contract_rows(rows, filename, user):
                     new_contracts.append(contract)
                     batch.added_rows += 1
                 else:
+                    # Vérifie aussi les étapes successives du même fichier.
+                    if (
+                        item["import_type"] == ImportBatch.ImportType.PROVISIONAL
+                        and not item["is_termination"]
+                        and not item.get("preserve_closed_cycle")
+                    ):
+                        conflict = provisional_import_conflict(contract, item["values"])
+                        if conflict:
+                            record_error(batch, item["line"], ValueError(conflict))
+                            continue
                     claimed_ids.add(contract.pk)
                     if item.get("preserve_closed_cycle"):
                         merge_closed_cycle_values(
@@ -1700,6 +1773,7 @@ def import_contract_rows(rows, filename, user):
                         "receipt",
                         *CONTRACT_VALUE_FIELDS,
                         "provisional_calls_started_at",
+                        "renewal_calls_started_at",
                         "from_upcoming_file",
                         "renewal_status",
                         "renewed_contract",

@@ -2018,6 +2018,7 @@ class ApplicationFlowTests(TestCase):
 
     def test_interaction_is_appended_and_status_updated(self):
         response = self.client.post(reverse("contract_detail", args=[self.contract.pk]), {
+            "call_context": self.contract.call_context_token,
             "channel": "phone",
             "call_result": "answered",
             "renewal_status": "wants",
@@ -2089,6 +2090,7 @@ class ApplicationFlowTests(TestCase):
 
         response = self.client.post(reverse("call_checklist"), {
             "contract": self.contract.pk,
+            "call_context": self.contract.call_context_token,
             "call_result": "voicemail",
             "comment": "Message laissé",
         })
@@ -2117,6 +2119,7 @@ class ApplicationFlowTests(TestCase):
 
         response = self.client.post(filtered_url, {
             "contract": self.contract.pk,
+            "call_context": self.contract.call_context_token,
             "call_result": "voicemail",
         })
 
@@ -2138,6 +2141,7 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(response, other_client.name)
         response = self.client.post(reverse("call_checklist"), {
             "contract": other_contract.pk,
+            "call_context": other_contract.call_context_token,
             "call_result": "answered",
         })
         self.assertEqual(response.status_code, 404)
@@ -2146,6 +2150,7 @@ class ApplicationFlowTests(TestCase):
     def test_call_checklist_rejects_an_unknown_result(self):
         response = self.client.post(reverse("call_checklist"), {
             "contract": self.contract.pk,
+            "call_context": self.contract.call_context_token,
             "call_result": "busy",
         })
         self.assertRedirects(response, reverse("call_checklist"))
@@ -2687,6 +2692,7 @@ class ApplicationFlowTests(TestCase):
                 "call_result": CallInteraction.Result.ANSWERED,
                 "renewal_status": Contract.RenewalStatus.TERMINATED,
                 "comment": "Résiliation confirmée par le client",
+                "call_context": self.contract.call_context_token,
                 "next_follow_up": "",
             },
         )
@@ -2713,6 +2719,7 @@ class ApplicationFlowTests(TestCase):
                 "call_result": CallInteraction.Result.ANSWERED,
                 "renewal_status": Contract.RenewalStatus.TO_CONTACT,
                 "comment": "Tentative de réouverture",
+                "call_context": self.contract.call_context_token,
                 "next_follow_up": "",
             },
         )
@@ -2772,6 +2779,7 @@ class ApplicationFlowTests(TestCase):
             reverse("call_checklist"),
             {
                 "contract": relation_contract.pk,
+                "call_context": relation_contract.call_context_token,
                 "call_result": CallInteraction.Result.ANSWERED,
             },
         )

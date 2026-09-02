@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser
+from django.core import signing
 from django.db import models
 from django.utils import timezone
 
@@ -101,6 +102,12 @@ class Contract(models.Model):
         blank=True,
         editable=False,
     )
+    renewal_calls_started_at = models.DateTimeField(
+        "début des appels de renouvellement après provisoire",
+        null=True,
+        blank=True,
+        editable=False,
+    )
     from_upcoming_file = models.BooleanField(
         "présent dans un fichier d’échéances",
         default=False,
@@ -119,13 +126,34 @@ class Contract(models.Model):
     @property
     def days_remaining(self): return (self.end_date - timezone.localdate()).days
     @property
+    def is_renewal_call(self):
+        return bool(
+            self.renewal_calls_started_at
+            and self.renewal_calls_started_at <= timezone.now()
+        )
+    @property
     def contact_due_date(self):
-        if self.is_provisional and self.provisional_due_date:
+        if self.is_provisional and self.provisional_due_date and not self.is_renewal_call:
             return self.provisional_due_date
         return self.end_date
     @property
     def contact_days_remaining(self):
         return (self.contact_due_date - timezone.localdate()).days
+    @property
+    def call_context_token(self):
+        # Ne dépend pas de updated_at : un réimport identique reste valide.
+        renewal_call = self.is_renewal_call
+        return signing.Signer(salt="renewals.call-context").sign_object([
+            self.pk,
+            self.is_provisional,
+            self.provisional_attestation,
+            str(self.provisional_due_date or ""),
+            self.provisional_delivered_count,
+            str(self.provisional_calls_started_at or ""),
+            renewal_call,
+            str(self.renewal_calls_started_at) if renewal_call else "",
+            str(self.end_date) if renewal_call else "",
+        ])
     @property
     def provisional_remaining_count(self):
         return max(

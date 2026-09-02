@@ -60,7 +60,7 @@
       </thead>
       <tbody>
         {% for contract in contracts %}
-        <tr class="{% if contract.last_call_at %}call-completed {% endif %}{% if contract.is_provisional %}call-provisional{% endif %}">
+        <tr class="{% if contract.last_call_at %}call-completed {% endif %}{% if contract.is_provisional and not contract.is_renewal_call %}call-provisional{% endif %}">
           <td data-label="Fait">
             <label class="call-check" title="{% if contract.last_call_at %}Appel traité{% else %}À appeler{% endif %}">
               <input type="checkbox" disabled {% if contract.last_call_at %}checked{% endif %}>
@@ -69,7 +69,10 @@
           <td data-label="Client / Police">
             <a class="client-name" href="{% url 'contract_detail' contract.pk %}">{{ contract.client.name }}</a>
             <small>Police {{ contract.policy_number }} · {{ contract.get_renewal_status_display }}</small>
-            {% if contract.is_provisional %}
+            {% if contract.is_renewal_call %}
+              <small>Renouvellement du contrat</small>
+              <small>Remise de la définitive non confirmée</small>
+            {% elif contract.is_provisional %}
               <span class="provisional-badge">Provisoire {{ contract.provisional_delivered_count }}/{{ contract.provisional_target_count }}</span>
               <small class="provisional-note">{{ contract.provisional_action_label }}</small>
               {% if contract.has_custom_provisional_plan %}<small>Choix client : {{ contract.provisional_target_count }} sur {{ contract.provisional_allowed_count }} autorisées</small>{% endif %}
@@ -81,12 +84,12 @@
           <td data-label="Véhicule">
             <b>{{ contract.brand|default:"—" }}</b>
             <small>{{ contract.registration|default:"Immatriculation non renseignée" }}</small>
-            {% if contract.is_provisional and contract.provisional_attestation %}<small>Attestation {{ contract.provisional_attestation }}</small>{% endif %}
+            {% if contract.is_provisional and not contract.is_renewal_call and contract.provisional_attestation %}<small>Attestation {{ contract.provisional_attestation }}</small>{% endif %}
           </td>
           <td data-label="Échéance / action">
             <b>{{ contract.action_date|date:"d/m/Y" }}</b>
             <small>{{ contract.display_days_remaining }} jour{{ contract.display_days_remaining|pluralize }}</small>
-            {% if contract.is_provisional %}<small class="provisional-note">Échéance provisoire</small>{% endif %}
+            {% if contract.is_renewal_call %}<small>Échéance finale du contrat</small>{% elif contract.is_provisional %}<small class="provisional-note">Échéance provisoire</small>{% endif %}
           </td>
           <td data-label="Dernier appel">
             <span class="call-status {{ contract.last_call_result|default:'pending' }}">{{ contract.last_call_label }}</span>
@@ -99,6 +102,7 @@
             <form method="post" action="{{ request.get_full_path }}" class="quick-call-form">
               {% csrf_token %}
               <input type="hidden" name="contract" value="{{ contract.pk }}">
+              <input type="hidden" name="call_context" value="{{ contract.call_context_token }}">
               <select name="call_result" required aria-label="Résultat de l’appel pour {{ contract.client.name }}">
                 <option value="">Résultat…</option>
                 {% for value, label in call_results %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
