@@ -89,6 +89,7 @@ class ProvisionalCallCycleTests(TestCase):
         row = response.context["contracts"][0]
         self.assertIsNone(self.contract.provisional_calls_started_at)
         self.assertEqual(row.last_call_result, CallInteraction.Result.ANSWERED)
+        self.assertEqual(row.call_attempts, 1)
         self.assertEqual(response.context["completed_count"], 1)
 
     def test_new_step_resets_all_call_results_and_filters_but_keeps_history(self):
@@ -111,7 +112,7 @@ class ProvisionalCallCycleTests(TestCase):
                 row = response.context["contracts"][0]
                 self.assertIsNone(row.last_call_at)
                 self.assertEqual(row.last_call_label, "À appeler")
-                self.assertEqual(row.call_attempts, 1)  # Total historique conservé.
+                self.assertEqual(row.call_attempts, 0)
                 self.assertEqual(response.context["pending_count"], 1)
                 self.assertEqual(response.context["completed_count"], 0)
                 self.assertEqual(response.context["unavailable_count"], 0)
@@ -139,8 +140,45 @@ class ProvisionalCallCycleTests(TestCase):
         self.assertEqual(response.context["pending_count"], 0)
         row = response.context["contracts"][0]
         self.assertEqual(row.last_call_result, CallInteraction.Result.VOICEMAIL)
-        self.assertEqual(row.call_attempts, 2)
+        self.assertEqual(row.call_attempts, 1)
         self.assertEqual(self.contract.interactions.count(), 2)
+
+    def test_repaired_legacy_step_shows_zero_attempts_without_deleting_history(self):
+        self.contract.provisional_calls_started_at = timezone.now()
+        self.contract.save(update_fields=["provisional_calls_started_at"])
+
+        response = self.checklist(call_status="pending")
+        row = response.context["contracts"][0]
+        self.assertEqual(row.last_call_label, "À appeler")
+        self.assertEqual(row.call_attempts, 0)
+        self.assertContains(response, "0</b><small>tentative")
+        self.assertEqual(self.contract.interactions.count(), 1)
+        self.old_call.refresh_from_db()
+        self.assertEqual(self.old_call.comment, "Appel conservé de la première provisoire")
+
+    def test_attempts_count_only_phone_calls_at_or_after_current_cycle_start(self):
+        cycle_start = timezone.now() - timedelta(hours=1)
+        self.contract.provisional_calls_started_at = cycle_start
+        self.contract.save(update_fields=["provisional_calls_started_at"])
+        for channel, offset in (
+            (CallInteraction.Channel.PHONE, -1),
+            (CallInteraction.Channel.PHONE, 0),
+            (CallInteraction.Channel.PHONE, 1),
+            (CallInteraction.Channel.SMS, 2),
+        ):
+            CallInteraction.objects.create(
+                contract=self.contract,
+                employee=self.user,
+                occurred_at=cycle_start + timedelta(seconds=offset),
+                channel=channel,
+                call_result=CallInteraction.Result.VOICEMAIL,
+                renewal_status=self.contract.renewal_status,
+            )
+
+        row = self.checklist().context["contracts"][0]
+        self.assertEqual(row.call_attempts, 2)
+        self.assertEqual(row.last_call_at, cycle_start + timedelta(seconds=1))
+        self.assertEqual(self.contract.interactions.count(), 5)
 
     def test_changed_due_date_alone_starts_a_new_step(self):
         self.import_provisional(due_date=timezone.localdate() + timedelta(days=35))
@@ -207,7 +245,9 @@ class ProvisionalCallCycleTests(TestCase):
         self.contract.is_provisional = False
         self.contract.provisional_calls_started_at = timezone.now()
         self.contract.save(update_fields=["is_provisional", "provisional_calls_started_at"])
-        self.assertEqual(self.checklist().context["completed_count"], 1)
+        response = self.checklist()
+        self.assertEqual(response.context["completed_count"], 1)
+        self.assertEqual(response.context["contracts"][0].call_attempts, 1)
 
     def test_old_file_cannot_revert_step_or_change_other_data(self):
         old_due = self.contract.provisional_due_date

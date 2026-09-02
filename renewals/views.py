@@ -7,6 +7,7 @@ from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import transaction
 from django.db.models import Case, Count, DateField, DateTimeField, F, OuterRef, Prefetch, Q, Subquery, Sum, Value, When
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -485,6 +486,10 @@ def call_checklist(request):
     ).filter(
         Q(cycle_start__isnull=True) | Q(occurred_at__gte=F("cycle_start"))
     ).order_by("-occurred_at", "-pk")
+    # Le compteur et le dernier appel portent sur la même étape de suivi.
+    cycle_call_count = latest_call.order_by().values("contract").annotate(
+        total=Count("pk"),
+    ).values("total")
     closed_statuses = [
         Contract.RenewalStatus.RENEWED,
         Contract.RenewalStatus.TERMINATED,
@@ -506,11 +511,7 @@ def call_checklist(request):
         ),
         last_call_result=Subquery(latest_call.values("call_result")[:1]),
         last_call_at=Subquery(latest_call.values("occurred_at")[:1]),
-        call_attempts=Count(
-            "interactions",
-            filter=Q(interactions__channel=CallInteraction.Channel.PHONE),
-            distinct=True,
-        ),
+        call_attempts=Coalesce(Subquery(cycle_call_count), Value(0)),
     ).order_by("action_date", "client__name", "pk")
 
     today = timezone.localdate()

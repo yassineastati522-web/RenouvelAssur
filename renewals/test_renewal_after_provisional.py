@@ -105,7 +105,7 @@ class RenewalAfterProvisionalTests(TestCase):
         self.assertEqual(row.action_date, self.contract.end_date)
         self.assertEqual(row.contact_due_date, self.contract.end_date)
         self.assertEqual(row.last_call_label, "À appeler")
-        self.assertEqual(row.call_attempts, 1)
+        self.assertEqual(row.call_attempts, 0)
         self.assertEqual(response.context["pending_count"], 1)
         self.assertEqual(response.context["completed_count"], 0)
         self.assertTrue(self.contract.is_provisional)
@@ -150,7 +150,7 @@ class RenewalAfterProvisionalTests(TestCase):
         self.assertEqual(response.context["unavailable_count"], 1)
         row = response.context["contracts"][0]
         self.assertEqual(row.last_call_result, "voicemail")
-        self.assertEqual(row.call_attempts, 2)
+        self.assertEqual(row.call_attempts, 1)
         self.assertEqual(self.contract.interactions.count(), 2)
 
     def test_future_provisional_remains_active_until_the_next_local_midnight(self):
@@ -167,18 +167,22 @@ class RenewalAfterProvisionalTests(TestCase):
         response = self.checklist()
         self.assertEqual(response.context["contracts"][0].action_date, self.contract.provisional_due_date)
         self.assertEqual(response.context["completed_count"], 1)
+        self.assertEqual(response.context["contracts"][0].call_attempts, 1)
         self.assertFalse(self.contract.is_renewal_call)
         self.advance_to(transition)
         response = self.checklist()
         self.assertEqual(response.context["contracts"][0].action_date, self.contract.end_date)
         self.assertEqual(response.context["pending_count"], 1)
+        self.assertEqual(response.context["contracts"][0].call_attempts, 0)
         self.assertTrue(self.contract.is_renewal_call)
         self.assertNotEqual(self.contract.call_context_token, old_token)
         self.record_call(token=old_token)
         self.assertEqual(self.contract.interactions.count(), 1)
         self.record_call()
         self.assertEqual(self.contract.interactions.count(), 2)
-        self.assertEqual(self.checklist().context["completed_count"], 1)
+        response = self.checklist()
+        self.assertEqual(response.context["completed_count"], 1)
+        self.assertEqual(response.context["contracts"][0].call_attempts, 1)
 
     def test_provisional_expiring_today_does_not_switch_early(self):
         self.contract.provisional_due_date = self.today
