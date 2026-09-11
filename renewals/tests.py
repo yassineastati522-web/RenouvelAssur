@@ -2506,7 +2506,7 @@ class ApplicationFlowTests(TestCase):
         self.assertNotContains(response, 'name="q"')
         self.assertNotContains(response, 'name="status"')
 
-    def test_non_renewed_export_requires_a_complete_seven_day_interval(self):
+    def test_non_renewed_export_requires_dates_and_limits_interval_to_fifteen_days(self):
         missing_dates = self.client.get(reverse("expired_list"), {
             "action": "export",
         })
@@ -2519,14 +2519,30 @@ class ApplicationFlowTests(TestCase):
 
         interval_too_large = self.client.get(reverse("expired_list"), {
             "action": "export",
-            "date_from": (timezone.localdate() - timedelta(days=10)).isoformat(),
+            "date_from": (timezone.localdate() - timedelta(days=18)).isoformat(),
             "date_to": (timezone.localdate() - timedelta(days=3)).isoformat(),
         })
 
         self.assertEqual(interval_too_large.status_code, 200)
         self.assertContains(
             interval_too_large,
-            "L’intervalle d’export ne peut pas dépasser 7 jours.",
+            "L’intervalle d’export ne peut pas dépasser 15 jours.",
+        )
+
+        largest_allowed_interval = self.client.get(reverse("expired_list"), {
+            "action": "export",
+            "date_from": (timezone.localdate() - timedelta(days=17)).isoformat(),
+            "date_to": (timezone.localdate() - timedelta(days=3)).isoformat(),
+        })
+
+        self.assertEqual(largest_allowed_interval.status_code, 200)
+        self.assertEqual(
+            largest_allowed_interval["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn(
+            "attachment;",
+            largest_allowed_interval["Content-Disposition"],
         )
 
     def test_non_renewed_export_downloads_excel_within_agent_scope(self):

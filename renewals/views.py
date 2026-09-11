@@ -36,6 +36,9 @@ from .models import (
 from .services import import_contracts
 
 
+MAX_EXPIRED_EXPORT_DAYS = 15
+
+
 def scoped_contracts(user):
     qs = Contract.objects.select_related(
         "client",
@@ -241,10 +244,11 @@ def expired_list(request):
                     None,
                     "Veuillez sélectionner un intervalle de dates avant l’export.",
                 )
-            elif (date_to - date_from).days > 6:
+            elif (date_to - date_from).days + 1 > MAX_EXPIRED_EXPORT_DAYS:
                 date_filter_form.add_error(
                     None,
-                    "L’intervalle d’export ne peut pas dépasser 7 jours.",
+                    f"L’intervalle d’export ne peut pas dépasser "
+                    f"{MAX_EXPIRED_EXPORT_DAYS} jours.",
                 )
             else:
                 exported_count = qs.count()
@@ -265,6 +269,7 @@ def expired_list(request):
         "title": "Clients non renouvelés",
         "expired": True,
         "date_filter_form": date_filter_form,
+        "max_export_days": MAX_EXPIRED_EXPORT_DAYS,
     })
 
 
