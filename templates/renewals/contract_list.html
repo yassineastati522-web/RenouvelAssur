@@ -6,7 +6,7 @@
     <span class="eyebrow">PORTEFEUILLE</span>
     <h1>{{ title }}</h1>
     {% if expired %}
-      <p>Affichez les contrats non renouvelés sur la période d’échéance souhaitée.</p>
+      <p>Affichez les contrats non renouvelés sur la période d’échéance souhaitée. L’export accepte un intervalle maximal de {{ max_export_days }} jours.</p>
     {% else %}
       <p>Recherchez, filtrez et ouvrez une fiche pour enregistrer un appel.</p>
     {% endif %}

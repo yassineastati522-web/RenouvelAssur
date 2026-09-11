@@ -18,7 +18,7 @@ MVP de suivi des renouvellements de contrats pour une agence d’assurance. L’
 - statut de renouvellement géré séparément du résultat d’appel ;
 - historique complet, non destructif et paginé des interactions ;
 - fiches clients, téléphone modifiable et portefeuille associé ;
-- contrats expirés sans renouvellement et résiliations ; un nouveau contrat portant la même immatriculation marque automatiquement l’ancien comme renouvelé ;
+- contrats expirés sans renouvellement, exportables sur un intervalle maximal de 15 jours, et résiliations ; un nouveau contrat portant la même immatriculation marque automatiquement l’ancien comme renouvelé ;
 - suggestion « Injoignable » après trois tentatives infructueuses sur des jours distincts ;
 - administration des utilisateurs et attributions via `/admin/`.
 
